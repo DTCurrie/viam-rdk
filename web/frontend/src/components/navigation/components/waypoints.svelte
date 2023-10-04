@@ -1,9 +1,8 @@
-<script lang='ts'>
-
+<script lang="ts">
 import { Map, type MapMouseEvent } from 'maplibre-gl';
 import { NavigationClient, type ServiceError } from '@viamrobotics/sdk';
 import { notify } from '@viamrobotics/prime';
-import { setAsyncInterval } from '@/lib/schedule';
+import { scheduleAsyncInterval } from '@viamrobotics/prime-core';
 import { useRobotClient, useDisconnect } from '@/hooks/robot-client';
 import { waypoints, tab } from '../stores';
 import MapMarker from './marker.svelte';
@@ -14,7 +13,9 @@ export let map: Map;
 export let name: string;
 
 const { robotClient } = useRobotClient();
-const navClient = new NavigationClient($robotClient, name, { requestLogger: rcLogConditionally });
+const navClient = new NavigationClient($robotClient, name, {
+  requestLogger: rcLogConditionally,
+});
 
 const handleAddMarker = async (event: MapMouseEvent) => {
   if (event.originalEvent.button > 0) {
@@ -43,7 +44,10 @@ const updateWaypoints = async () => {
   }
 };
 
-const clearUpdateWaypointInterval = setAsyncInterval(updateWaypoints, 1000);
+const clearUpdateWaypointInterval = scheduleAsyncInterval(
+  updateWaypoints,
+  1000
+);
 updateWaypoints();
 
 useDisconnect(() => clearUpdateWaypointInterval());
@@ -53,9 +57,11 @@ $: if ($tab === 'Waypoints') {
 } else {
   map.off('click', handleAddMarker);
 }
-
 </script>
 
 {#each $waypoints as waypoint (waypoint.id)}
-  <MapMarker scale={0.7} lngLat={waypoint} />
+  <MapMarker
+    scale={0.7}
+    lngLat={waypoint}
+  />
 {/each}

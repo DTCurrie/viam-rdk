@@ -6,9 +6,7 @@ import url from 'node:url';
 
 const MD5 = new Hashes.MD5();
 
-export const plugins = [
-  svelte(),
-];
+export const plugins = [svelte()];
 
 // https://vitejs.dev/config/
 export default defineConfig({
@@ -57,7 +55,10 @@ export default defineConfig({
   },
   resolve: {
     alias: {
-      '@': path.resolve(path.dirname(url.fileURLToPath(import.meta.url)), './src'),
+      '@': path.resolve(
+        path.dirname(url.fileURLToPath(import.meta.url)),
+        './src'
+      ),
     },
   },
 });

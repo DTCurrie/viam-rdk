@@ -17,7 +17,7 @@ describe('base', () => {
     // cy.contains('h2', 'test_camera').should('exist').click();
 
     // cy.contains('h2', 'test_base').should('exist').click();
-    
+
     // // View and hide camera
     // cy.get('[aria-label="View Camera: test_camera"]').first().find('button').should('exist').click();
     // cy.get('[aria-label="test_camera stream"').should('exist');

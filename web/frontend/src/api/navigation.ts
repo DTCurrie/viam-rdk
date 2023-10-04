@@ -4,7 +4,10 @@ import * as THREE from 'three';
 import { NavigationClient, type Waypoint } from '@viamrobotics/sdk';
 import { ViamObject3D } from '@viamrobotics/three';
 import type {
-  BoxGeometry, CapsuleGeometry, Obstacle, SphereGeometry,
+  BoxGeometry,
+  CapsuleGeometry,
+  Obstacle,
+  SphereGeometry,
 } from './types/navigation';
 import { notify } from '@viamrobotics/prime';
 export * from './types/navigation';
@@ -20,7 +23,9 @@ export const formatWaypoints = (list: Waypoint[]) => {
   });
 };
 
-export const getObstacles = async (navClient: NavigationClient): Promise<Obstacle[]> => {
+export const getObstacles = async (
+  navClient: NavigationClient
+): Promise<Obstacle[]> => {
   const list = await navClient.getObstacles();
 
   return list.map((obstacle, index) => {
@@ -48,15 +53,12 @@ export const getObstacles = async (navClient: NavigationClient): Promise<Obstacl
             height: (dimsMm?.z ?? 0) / 1000,
             pose,
           } satisfies BoxGeometry;
-
         } else if (geometry.sphere) {
-
           return {
             type: 'sphere',
             radius: (geometry.sphere.radiusMm ?? 0) / 1000,
             pose,
           } satisfies SphereGeometry;
-
         } else if (geometry.capsule) {
           const { capsule } = geometry;
 
@@ -66,12 +68,16 @@ export const getObstacles = async (navClient: NavigationClient): Promise<Obstacl
             length: (capsule?.lengthMm ?? 0) / 1000,
             pose,
           } satisfies CapsuleGeometry;
-
         }
 
-        notify.danger('An unsupported geometry was encountered in an obstacle', JSON.stringify(geometry));
+        notify.danger(
+          'An unsupported geometry was encountered in an obstacle',
+          JSON.stringify(geometry)
+        );
         throw new Error(
-          `An unsupported geometry was encountered in an obstacle: ${JSON.stringify(geometry)}`
+          `An unsupported geometry was encountered in an obstacle: ${JSON.stringify(
+            geometry
+          )}`
         );
       }),
     } satisfies Obstacle;

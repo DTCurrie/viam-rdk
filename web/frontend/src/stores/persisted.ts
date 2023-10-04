@@ -1,11 +1,11 @@
 import { writable, type Writable } from 'svelte/store';
 
 declare type Updater<T> = (value: T) => T;
-declare type StoreDict<T> = { [key: string]: Writable<T> }
+declare type StoreDict<T> = { [key: string]: Writable<T> };
 
 const stores: StoreDict<unknown> = {};
 
-type StorageType = 'local' | 'session'
+type StorageType = 'local' | 'session';
 
 const getStorage = (type: StorageType) => {
   return type === 'local' ? localStorage : sessionStorage;
@@ -22,7 +22,8 @@ export const persisted = <T>(
   initialValue: T,
   storageType: 'local' | 'session' = 'local'
 ): Writable<T> => {
-  const browser = typeof window !== 'undefined' && typeof document !== 'undefined';
+  const browser =
+    typeof window !== 'undefined' && typeof document !== 'undefined';
   const storage = browser ? getStorage(storageType) : null;
 
   const updateStorage = (storagekey: string, value: T) => {
@@ -57,11 +58,11 @@ export const persisted = <T>(
     const { subscribe, set } = store;
 
     stores[key] = {
-      set (value: T) {
+      set(value: T) {
         updateStorage(key, value);
         set(value);
       },
-      update (callback: Updater<T>) {
+      update(callback: Updater<T>) {
         return store.update((last) => {
           const value = callback(last);
 

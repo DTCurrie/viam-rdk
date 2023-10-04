@@ -1,23 +1,36 @@
-<script lang='ts'>
-
-/* eslint-disable require-atomic-updates */
+<script lang="ts">
 import { grpc } from '@improbable-eng/grpc-web';
 import { Duration } from 'google-protobuf/google/protobuf/duration_pb';
 import { onMount, onDestroy, createEventDispatcher } from 'svelte';
 import { type Credentials, ConnectionClosedError } from '@viamrobotics/rpc';
-import { Client, robotApi, commonApi, type ServiceError } from '@viamrobotics/sdk';
+import {
+  createRobotClient,
+  robotApi,
+  commonApi,
+  type ServiceError,
+} from '@viamrobotics/sdk';
 import { notify } from '@viamrobotics/prime';
-import { StreamManager } from '@/lib/stream-manager';
-import { getOperations, getResourceNames, getSessions } from '@/api/robot';
+import { getSessions } from '@/api/robot';
 import { getSensors } from '@/api/sensors';
 import { useRobotClient } from '@/hooks/robot-client';
-import { setAsyncInterval } from '@/lib/schedule';
-import { resourceNameToString, filterSubtype } from '@/lib/resource';
+import {
+  scheduleAsyncInterval,
+  type IntervalCanceller,
+  Button,
+  TextInput,
+} from '@viamrobotics/prime-core';
+import {
+  resourceNameToString,
+  filterSubtype,
+  stringToResourceName,
+} from '@/lib/resource';
+import type { Operation } from '@viamrobotics/sdk/dist/gen/robot/v1/robot_pb';
+import { displayError, displayErrorOnce } from '../error';
+import { createStreamManager } from '../stream-manager';
 
-export let webrtcEnabled: boolean;
 export let host: string;
 export let signalingAddress: string;
-export let bakedAuth: { authEntity?: string; creds?: Credentials; } = {};
+export let bakedAuth: { authEntity?: string; creds?: Credentials } = {};
 export let supportedAuthTypes: string[] = [];
 
 const {
@@ -36,7 +49,7 @@ const {
 } = useRobotClient();
 
 const dispatch = createEventDispatcher<{
-  'connection-error': unknown
+  'connection-error': unknown;
 }>();
 
 const relevantSubtypesForStatus = [
@@ -48,54 +61,16 @@ const relevantSubtypesForStatus = [
   'input_controller',
 ] as const;
 
-const impliedURL = `${location.protocol}//${location.hostname}${location.port ? `:${location.port}` : ''}`;
-
-$robotClient = new Client(impliedURL, {
-  enabled: webrtcEnabled,
-  host,
-  signalingAddress,
-  rtcConfig: {
-    iceServers: [
-      {
-        urls: 'stun:global.stun.twilio.com:3478',
-      },
-    ],
-  },
-
-  /*
-   * TODO(RSDK-3183): Opt out of reconnection management in the Typescript
-   * SDK because the Remote Control implements its own reconnection management.
-   *
-   * The Typescript SDK only manages reconnections for WebRTC connections - once
-   * it can manage reconnections for direct gRPC connections, then we remove
-   * reconnection management from the Remote Control panel entirely and just rely
-   * on the Typescript SDK for that.
-   */
-  noReconnect: true,
-});
-
 let password = '';
 let lastStatusTS: number | null = null;
 let resourcesOnce = false;
+let cancelInit: IntervalCanceller;
+let cancelTick: IntervalCanceller;
 
-$streamManager = new StreamManager($robotClient);
-
-const errors: Record<string, boolean> = {};
-
-const handleError = (message: string, error: unknown, onceKey: string) => {
-  if (onceKey) {
-    if (errors[onceKey]) {
-      return;
-    }
-
-    errors[onceKey] = true;
-  }
-
-  notify.danger(message);
-  console.error(message, { error });
-};
-
-const handleCallErrors = (list: { resources: boolean; ops: boolean }, newErrors: unknown) => {
+const handleCallErrors = (
+  list: { resources: boolean; ops: boolean },
+  newErrors: unknown
+) => {
   const errorsList = document.createElement('ul');
   errorsList.classList.add('list-disc', 'pl-4');
 
@@ -112,49 +87,26 @@ const handleCallErrors = (list: { resources: boolean; ops: boolean }, newErrors:
     }
   }
 
-  handleError(
-    `Error fetching the following: ${errorsList.outerHTML}`,
-    newErrors,
+  displayErrorOnce(
+    new Error(`Error retrieving the following: ${errorsList.outerHTML}`, {
+      cause: newErrors,
+    }),
     'connection'
   );
 };
 
-const stringToResourceName = (nameStr: string) => {
-  const [prefix, suffix] = nameStr.split('/');
-  let name = '';
-
-  if (suffix) {
-    name = suffix;
-  }
-
-  const subtypeParts = prefix!.split(':');
-  if (subtypeParts.length > 3) {
-    throw new Error('more than 2 colons in resource name string');
-  }
-
-  if (subtypeParts.length < 3) {
-    throw new Error('less than 2 colons in resource name string');
-  }
-
-  return {
-    namespace: subtypeParts[0],
-    type: subtypeParts[1],
-    subtype: subtypeParts[2],
-    name,
-  };
-};
-
 const loadCurrentOps = async () => {
   const now = Date.now();
-  const list = await getOperations($robotClient);
-  const ops = [];
+  const list = await $robotClient.getOperations();
+  const ops: { op: Operation.AsObject; elapsed: number }[] = [];
 
   $rtt = Math.max(Date.now() - now, 0);
 
-  for (const op of list) {
+  for (const operation of list ?? []) {
+    const op = operation.toObject();
     ops.push({
       op,
-      elapsed: op.started ? Date.now() - (op.started.seconds * 1000) : -1,
+      elapsed: op.started ? Date.now() - op.started.seconds * 1000 : -1,
     });
   }
 
@@ -163,6 +115,7 @@ const loadCurrentOps = async () => {
       // move op with null start time to the back of the list
       return op2.elapsed - op1.elapsed;
     }
+
     return op1.elapsed - op2.elapsed;
   });
 
@@ -226,10 +179,13 @@ const restartStatusStream = () => {
 
   $statusStream = $robotClient.robotService.streamStatus(streamReq);
   if ($statusStream !== null) {
-    $statusStream.on('data', (response: { getStatusList(): robotApi.Status[] }) => {
-      updateStatus(response.getStatusList());
-      lastStatusTS = Date.now();
-    });
+    $statusStream.on(
+      'data',
+      (response: { getStatusList(): robotApi.Status[] }) => {
+        updateStatus(response.getStatusList());
+        lastStatusTS = Date.now();
+      }
+    );
     $statusStream.on('status', (newStatus?: { details: unknown }) => {
       if (!ConnectionClosedError.isError(newStatus!.details)) {
         console.error('error streaming robot status', newStatus);
@@ -248,11 +204,11 @@ const queryMetadata = async () => {
   let resourcesChanged = false;
   let shouldRestartStatusStream = !(resourcesOnce && $statusStream);
 
-  const resourcesList = await getResourceNames($robotClient);
-
+  const resourcesList = await $robotClient.resourceNames();
   const differences: Set<string> = new Set(
     $resources.map((name) => resourceNameToString(name))
   );
+
   const resourceSet: Set<string> = new Set(
     resourcesList.map((name) => resourceNameToString(name))
   );
@@ -271,10 +227,13 @@ const queryMetadata = async () => {
     // restart status stream if resource difference includes a resource we care about
     for (const elem of differences) {
       const resource = stringToResourceName(elem);
+
       if (
         resource.namespace === 'rdk' &&
         resource.type === 'component' &&
-        relevantSubtypesForStatus.includes(resource.subtype as typeof relevantSubtypesForStatus[number])
+        relevantSubtypesForStatus.includes(
+          resource.subtype as (typeof relevantSubtypesForStatus)[number]
+        )
       ) {
         shouldRestartStatusStream = true;
         break;
@@ -286,10 +245,14 @@ const queryMetadata = async () => {
 
   resourcesOnce = true;
   if (resourcesChanged === true) {
-    const sensorsName = filterSubtype(resources.current, 'sensors', { remote: false })[0]?.name;
+    const sensorsName = filterSubtype(resources.current, 'sensors', {
+      remote: false,
+    })[0]?.name;
 
-    $sensorNames = sensorsName === undefined ? [] : (await getSensors($robotClient, sensorsName));
-
+    $sensorNames =
+      sensorsName === undefined
+        ? []
+        : await getSensors($robotClient, sensorsName);
   }
 
   if (shouldRestartStatusStream === true) {
@@ -305,14 +268,12 @@ const connections = {
   sessions: false,
 };
 
-let cancelTick: undefined | (() => void);
-
 const isConnected = () => {
   return (
     connections.resources &&
     connections.ops &&
     // check status on interval if direct grpc
-    (webrtcEnabled || (Date.now() - lastStatusTS! <= checkIntervalMillis))
+    Date.now() - lastStatusTS! <= checkIntervalMillis
   );
 };
 
@@ -385,7 +346,7 @@ const tick = async () => {
 
     lastStatusTS = Date.now();
     console.debug('reconnected');
-    $streamManager.refreshStreams();
+    $streamManager.refresh();
   } catch (error) {
     if (ConnectionClosedError.isError(error)) {
       console.error('failed to reconnect; retrying');
@@ -396,6 +357,7 @@ const tick = async () => {
 };
 
 const stop = () => {
+  cancelInit?.();
   cancelTick?.();
   $statusStream?.cancel();
   $statusStream = null;
@@ -405,7 +367,7 @@ const start = () => {
   stop();
   lastStatusTS = Date.now();
   tick();
-  cancelTick = setAsyncInterval(tick, 500);
+  cancelTick = scheduleAsyncInterval(tick, 500);
 };
 
 const connect = async (creds?: Credentials) => {
@@ -413,7 +375,9 @@ const connect = async (creds?: Credentials) => {
 
   await $robotClient.connect(bakedAuth.authEntity, creds ?? bakedAuth.creds);
 
+  $streamManager = createStreamManager($robotClient);
   $connectionStatus = 'connected';
+
   start();
 };
 
@@ -428,52 +392,59 @@ const login = async (authType: string) => {
   }
 };
 
-/*
- * If the component is unmounted during the init setTimeout evaluations,
- * nothing will stop init from calling setTimeout and trying to reconnect
- * again. This boolean is used to track whether the component is mounted
- * and explicitly stop trying to connect.
- */
-let isMounted = false;
+const init = async (useLocal?: boolean) => {
+  $connectionStatus = 'connecting';
 
-const init = async () => {
   try {
+    const { protocol, hostname, port } = location;
+    const url = `${protocol}//${useLocal ? hostname : host}${
+      port ? `:${port}` : ''
+    }`;
+
+    $robotClient = await createRobotClient({
+      host: url,
+      signalingAddress,
+      iceServers: [{ urls: 'stun:global.stun.twilio.com:3478' }],
+    });
+
     await connect();
   } catch (error) {
-    dispatch('connection-error', error);
-    if (isMounted) {
-      setTimeout(init);
+    if (useLocal) {
+      dispatch('connection-error', error);
+      displayError(error);
     }
+
+    cancelInit = scheduleAsyncInterval(() => init(true), 5000);
   }
 };
 
 const handleUnload = () => {
   stop();
-  $streamManager?.close();
+  $streamManager.stop();
   $robotClient.disconnect();
+  cancelInit?.();
+  cancelTick?.();
 };
 
 onMount(() => {
-  isMounted = true;
   window.addEventListener('beforeunload', handleUnload);
+
+  if (supportedAuthTypes.length === 0) {
+    init();
+  }
 });
 
 onDestroy(() => {
-  isMounted = false;
   handleUnload();
   window.removeEventListener('beforeunload', handleUnload);
+  $connectionStatus = 'idle';
 });
-
-if (supportedAuthTypes.length === 0) {
-  init();
-}
-
 </script>
 
 {#if $connectionStatus === 'connecting'}
-  <slot name='connecting' />
+  <slot name="connecting" />
 {:else if $connectionStatus === 'reconnecting'}
-  <slot name='reconnecting' />
+  <slot name="reconnecting" />
 {/if}
 
 {#if $connectionStatus === 'connected' || $connectionStatus === 'reconnecting'}
@@ -483,22 +454,23 @@ if (supportedAuthTypes.length === 0) {
     <div class="px-4 py-3">
       <span>{authType}: </span>
       <div class="w-96">
-        <input
-          bind:value={password}
-          disabled={$connectionStatus === 'connecting'}
-          class="
-            mb-2 block w-full appearance-none border p-2 text-gray-700
-            transition-colors duration-150 ease-in-out placeholder:text-gray-400 focus:outline-none
-          "
-          type="password"
-          autocomplete="off"
-          on:keyup={(event) => event.key === 'Enter' && login(authType)}
-        >
-        <v-button
-          disabled={$connectionStatus === 'connecting'}
-          label="Login"
-          on:click={$connectionStatus === 'connecting' ? undefined : () => login(authType)}
-        />
+        <form on:submit|preventDefault={() => login(authType)}>
+          <TextInput
+            type="password"
+            disabled={$connectionStatus === 'connecting'}
+            autocomplete="off"
+            bind:value={password}
+          />
+          <Button
+            type="submit"
+            disabled={$connectionStatus === 'connecting'}
+            on:click={$connectionStatus === 'connecting'
+              ? undefined
+              : () => login(authType)}
+          >
+            Login
+          </Button>
+        </form>
       </div>
     </div>
   {/each}

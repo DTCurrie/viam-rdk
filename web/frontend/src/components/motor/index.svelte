@@ -1,17 +1,18 @@
 <script lang="ts">
-
-import { motorApi, MotorClient, type ServiceError } from '@viamrobotics/sdk';
+import { motorApi, MotorClient } from '@viamrobotics/sdk';
 import { displayError } from '@/lib/error';
 import { rcLogConditionally } from '@/lib/log';
 import Collapse from '@/lib/components/collapse.svelte';
 import { useRobotClient } from '@/hooks/robot-client';
 
 export let name: string;
-export let status: undefined | {
-  is_powered?: boolean
-  position?: number
-  is_moving?: boolean
-};
+export let status:
+  | undefined
+  | {
+      is_powered?: boolean;
+      position?: number;
+      is_moving?: boolean;
+    };
 
 const motorPosFormat = new Intl.NumberFormat(undefined, {
   maximumFractionDigits: 3,
@@ -138,7 +139,7 @@ const setPower = async () => {
   try {
     await motorClient.setPower(powerPct);
   } catch (error) {
-    displayError(error as ServiceError);
+    displayError(error);
   }
 };
 
@@ -146,7 +147,7 @@ const goFor = async () => {
   try {
     await motorClient.goFor(rpm * direction, revolutions);
   } catch (error) {
-    displayError(error as ServiceError);
+    displayError(error);
   }
 };
 
@@ -154,7 +155,7 @@ const goTo = async () => {
   try {
     await motorClient.goTo(rpm, position);
   } catch (error) {
-    displayError(error as ServiceError);
+    displayError(error);
   }
 };
 
@@ -176,7 +177,7 @@ const motorStop = async () => {
   try {
     await motorClient.stop();
   } catch (error) {
-    displayError(error as ServiceError);
+    displayError(error);
   }
 };
 
@@ -188,22 +189,38 @@ const handleToggle = async (event: CustomEvent<{ open: boolean }>) => {
   try {
     properties = await motorClient.getProperties();
   } catch (error) {
-    displayError(error as ServiceError);
+    displayError(error);
   }
 };
-
 </script>
 
-<Collapse title={name} on:toggle={handleToggle}>
-  <v-breadcrumbs crumbs="motor" slot="title" />
-  <div class="flex items-center justify-between gap-2" slot="header">
+<Collapse
+  title={name}
+  on:toggle={handleToggle}
+>
+  <v-breadcrumbs
+    crumbs="motor"
+    slot="title"
+  />
+  <div
+    class="flex items-center justify-between gap-2"
+    slot="header"
+  >
     {#if properties?.positionReporting}
-      <v-badge label="Position {motorPosFormat.format(status?.position ?? 0)}" />
+      <v-badge
+        label="Position {motorPosFormat.format(status?.position ?? 0)}"
+      />
     {/if}
     {#if status?.is_powered}
-      <v-badge variant="green" label="Running" />
+      <v-badge
+        variant="green"
+        label="Running"
+      />
     {:else}
-      <v-badge variant="gray" label="Idle" />
+      <v-badge
+        variant="gray"
+        label="Idle"
+      />
     {/if}
     <v-button
       variant="danger"
@@ -213,15 +230,15 @@ const handleToggle = async (event: CustomEvent<{ open: boolean }>) => {
     />
   </div>
   <div class="border border-t-0 border-medium p-4">
-    <div class='mb-6'>
+    <div class="mb-6">
       <v-radio
-        class='inline-block'
+        class="inline-block"
         label="Set power"
         options={properties?.positionReporting ? 'Go, Go for, Go to' : 'Go'}
         selected={movementType}
         on:input={setMovementType}
       />
-      <small class='block pt-2 text-xs text-subtle-2'>
+      <small class="block pt-2 text-xs text-subtle-2">
         {#if movementType === 'Go'}
           Continuously moves
         {:else if movementType === 'Go for'}
@@ -233,12 +250,12 @@ const handleToggle = async (event: CustomEvent<{ open: boolean }>) => {
     </div>
 
     <div class="flex flex-col gap-2">
-      <div class='flex gap-4 items-end'>
+      <div class="flex gap-4 items-end">
         {#if movementType === 'Go to'}
           <v-input
             type="number"
             label="Position in revolutions"
-            placeholder='0'
+            placeholder="0"
             value={position}
             class="w-36 pr-2"
             on:input={setPosition}
@@ -248,7 +265,7 @@ const handleToggle = async (event: CustomEvent<{ open: boolean }>) => {
             type="number"
             class="w-36 pr-2"
             label="RPM"
-            placeholder='0'
+            placeholder="0"
             value={rpm}
             on:input={setRpm}
           />
@@ -257,7 +274,7 @@ const handleToggle = async (event: CustomEvent<{ open: boolean }>) => {
             type="number"
             class="w-36"
             label="# in revolutions"
-            placeholder='0'
+            placeholder="0"
             value={revolutions}
             on:input={setRevolutions}
             on:blur={setRevolutions}
@@ -271,7 +288,7 @@ const handleToggle = async (event: CustomEvent<{ open: boolean }>) => {
           <v-input
             type="number"
             label="RPM"
-            placeholder='0'
+            placeholder="0"
             class="w-36"
             value={rpm}
             on:input={setRpm}
@@ -281,7 +298,7 @@ const handleToggle = async (event: CustomEvent<{ open: boolean }>) => {
           <v-radio
             label="Direction of rotation"
             options="Forwards, Backwards"
-            selected="{direction === 1 ? 'Forwards' : 'Backwards'}"
+            selected={direction === 1 ? 'Forwards' : 'Backwards'}
             on:input={setDirection}
           />
           <div class="w-64">

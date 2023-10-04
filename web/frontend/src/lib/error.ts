@@ -1,23 +1,65 @@
-import type { ServiceError } from '@viamrobotics/sdk';
 import { notify } from '@viamrobotics/prime';
 
-const nonUserErrors = new Set(['Response closed without headers']);
+const NON_USER_ERRORS: Readonly<Set<string>> = new Set([
+  'Response closed without headers',
+]);
 
-export const isServiceError = (error: unknown): boolean => {
-  return error instanceof Object && error && 'message' in error;
+const errorsToLogOnce: Record<string, boolean> = {};
+
+const logError = (message: string, error: unknown, onceKey?: string) => {
+  if (onceKey) {
+    if (errorsToLogOnce[onceKey]) {
+      return;
+    }
+
+    errorsToLogOnce[onceKey] = true;
+  }
+
+  // eslint-disable-next-line no-console
+  console.error(message, error);
 };
 
-export const displayError = (error: ServiceError | string | null) => {
+export const getErrorMessage = (error: unknown): string | undefined => {
+  if (
+    error !== null &&
+    error instanceof Object &&
+    'message' in error &&
+    typeof error.message === 'string'
+  ) {
+    return error.message;
+  }
+
+  return undefined;
+};
+
+const handleError = (error: unknown, onceKey?: string) => {
   if (typeof error === 'string') {
-    if (!nonUserErrors.has(error)) {
+    if (!NON_USER_ERRORS.has(error)) {
       notify.danger(error);
     }
-    console.error(error);
-  } else if (isServiceError(error)) {
-    const serviceError = error as ServiceError;
-    if (!nonUserErrors.has(serviceError.message)) {
-      notify.danger(serviceError.message);
-    }
-    console.error(serviceError);
+
+    logError(error, {}, onceKey);
+    return;
   }
+
+  if (
+    error instanceof Object &&
+    'message' in error &&
+    typeof error.message === 'string'
+  ) {
+    const { message } = error;
+
+    if (!NON_USER_ERRORS.has(message)) {
+      notify.danger(message);
+    }
+
+    logError(message, error, onceKey);
+    return;
+  }
+
+  logError('Unknown error', error, onceKey);
 };
+
+export const displayError = (error: unknown) => handleError(error);
+export const displayErrorOnce = (error: unknown, key: string) =>
+  handleError(error, key);

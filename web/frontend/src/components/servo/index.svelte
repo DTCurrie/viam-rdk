@@ -1,6 +1,5 @@
 <script lang="ts">
-
-import { type ServiceError, servoApi } from '@viamrobotics/sdk';
+import { servoApi } from '@viamrobotics/sdk';
 import { displayError } from '@/lib/error';
 import { rcLogConditionally } from '@/lib/log';
 import Collapse from '@/lib/components/collapse.svelte';
@@ -27,14 +26,16 @@ const handleMove = async (amount: number) => {
   try {
     await move($robotClient, name, angle);
   } catch (error) {
-    displayError(error as ServiceError);
+    displayError(error);
   }
 };
-
 </script>
 
 <Collapse title={name}>
-  <v-breadcrumbs slot="title" crumbs="servo" />
+  <v-breadcrumbs
+    slot="title"
+    crumbs="servo"
+  />
   <v-button
     slot="header"
     label="Stop"
@@ -42,14 +43,29 @@ const handleMove = async (amount: number) => {
     variant="danger"
     on:click={stop}
   />
-  <div class="border border-t-0 border-medium p-4">
+  <div
+    slot="content"
+    class="border border-t-0 border-medium p-4"
+  >
     <h3 class="mb-1 text-sm">Angle: {status?.position_deg ?? 0}</h3>
 
     <div class="flex gap-1.5">
-      <v-button label="-10" on:click={() => handleMove(-10)} />
-      <v-button label="-1" on:click={() => handleMove(-1)} />
-      <v-button label="1" on:click={() => handleMove(1)} />
-      <v-button label="10" on:click={() => handleMove(10)} />
+      <v-button
+        label="-10"
+        on:click={() => handleMove(-10)}
+      />
+      <v-button
+        label="-1"
+        on:click={() => handleMove(-1)}
+      />
+      <v-button
+        label="1"
+        on:click={() => handleMove(1)}
+      />
+      <v-button
+        label="10"
+        on:click={() => handleMove(10)}
+      />
     </div>
   </div>
 </Collapse>

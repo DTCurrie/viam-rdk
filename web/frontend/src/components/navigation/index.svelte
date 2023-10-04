@@ -1,12 +1,22 @@
 <svelte:options immutable />
 
 <script lang="ts">
-
 import 'maplibre-gl/dist/maplibre-gl.css';
 import { notify } from '@viamrobotics/prime';
-import { navigationApi, NavigationClient, type ServiceError } from '@viamrobotics/sdk';
+import {
+  navigationApi,
+  NavigationClient,
+  type ServiceError,
+} from '@viamrobotics/sdk';
 import { getObstacles } from '@/api/navigation';
-import { mapCenter, centerMap, robotPosition, flyToMap, write as writeStore, obstacles } from './stores';
+import {
+  mapCenter,
+  centerMap,
+  robotPosition,
+  flyToMap,
+  write as writeStore,
+  obstacles,
+} from './stores';
 import { useRobotClient } from '@/hooks/robot-client';
 import Collapse from '@/lib/components/collapse.svelte';
 import Map from './components/map.svelte';
@@ -22,7 +32,9 @@ export let write = false;
 $: $writeStore = write;
 
 const { robotClient } = useRobotClient();
-const navClient = new NavigationClient($robotClient, name, { requestLogger: rcLogConditionally });
+const navClient = new NavigationClient($robotClient, name, {
+  requestLogger: rcLogConditionally,
+});
 
 let navMode: 'Manual' | 'Waypoint' | '' = '';
 const enum NavigationModes {
@@ -57,7 +69,6 @@ const setNavigationMode = async (event: CustomEvent) => {
 const handleEnter = async () => {
   $obstacles = await getObstacles(navClient);
 };
-
 </script>
 
 <Collapse title={name}>
@@ -71,13 +82,18 @@ const handleEnter = async () => {
     on:inview_enter={handleEnter}
     class="flex flex-col gap-2 border border-t-0 border-medium"
   >
-    <div class='flex flex-wrap gap-y-2 items-end justify-between py-3 px-4'>
-      <div class='flex gap-1'>
-        <div class='w-80'>
-          <LngLatInput readonly label='Base position' lng={$robotPosition?.lng} lat={$robotPosition?.lat}>
+    <div class="flex flex-wrap gap-y-2 items-end justify-between py-3 px-4">
+      <div class="flex gap-1">
+        <div class="w-80">
+          <LngLatInput
+            readonly
+            label="Base position"
+            lng={$robotPosition?.lng}
+            lat={$robotPosition?.lat}
+          >
             <v-button
-              variant='icon'
-              icon='image-filter-center-focus'
+              variant="icon"
+              icon="image-filter-center-focus"
               on:click={() => $robotPosition && flyToMap($robotPosition)}
             />
           </LngLatInput>
@@ -98,13 +114,12 @@ const handleEnter = async () => {
       />
     </div>
 
-    <div class='sm:flex w-full items-stretch'>
+    <div class="sm:flex w-full items-stretch">
       <Nav {name} />
 
-      <div class='relative grow'>
+      <div class="relative grow">
         <Map {name} />
       </div>
-
     </div>
   </div>
 </Collapse>

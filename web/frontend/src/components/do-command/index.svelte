@@ -1,11 +1,11 @@
 <script lang="ts">
-
 import { commonApi } from '@viamrobotics/sdk';
 import { notify } from '@viamrobotics/prime';
 import { resourceNameToString } from '@/lib/resource';
 import { doCommand } from '@/api/do-command';
 import Collapse from '@/lib/components/collapse.svelte';
 import { useRobotClient } from '@/hooks/robot-client';
+import { Button } from '@viamrobotics/prime-core';
 
 export let resources: commonApi.ResourceName.AsObject[];
 
@@ -46,7 +46,9 @@ const handleEditorInput = (event: CustomEvent) => {
   input = event.detail.value;
 };
 
-const namesToPrettySelect = (resourcesToPretty: commonApi.ResourceName.AsObject[]): string => {
+const namesToPrettySelect = (
+  resourcesToPretty: commonApi.ResourceName.AsObject[]
+): string => {
   const simple = new Map<string, number>();
 
   for (const resource of resourcesToPretty) {
@@ -56,18 +58,20 @@ const namesToPrettySelect = (resourcesToPretty: commonApi.ResourceName.AsObject[
     simple.set(resource.name, simple.get(resource.name)! + 1);
   }
 
-  return resourcesToPretty.map((res) => {
-    if (simple.get(res.name) === 1) {
-      return res.name;
-    }
-    return resourceNameToString(res);
-  }).join(',');
+  return resourcesToPretty
+    .map((res) => {
+      if (simple.get(res.name) === 1) {
+        return res.name;
+      }
+      return resourceNameToString(res);
+    })
+    .join(',');
 };
-
 </script>
 
-<Collapse title="DoCommand()">
-  <div class="h-full w-full border border-t-0 border-medium p-4">
+<Collapse>
+  <svelte:fragment slot="title">DoCommand()</svelte:fragment>
+  <svelte:fragment slot="content">
     <v-select
       label="Selected component"
       placeholder="Select a component"
@@ -79,9 +83,7 @@ const namesToPrettySelect = (resourcesToPretty: commonApi.ResourceName.AsObject[
     />
     <div class="flex h-full w-full flex-row flex-wrap gap-2">
       <div class="h-full w-full">
-        <p class="text-sm">
-          Input
-        </p>
+        <p class="text-sm">Input</p>
         <div class="h-[250px] w-full max-w-full border border-medium p-2">
           <v-code-editor
             language="json"
@@ -91,17 +93,16 @@ const namesToPrettySelect = (resourcesToPretty: commonApi.ResourceName.AsObject[
         </div>
       </div>
       <div class="flex min-w-[90px] flex-col justify-center">
-        <v-button
-          variant="inverse-primary"
-          label={executing ? 'RUNNING...' : 'DO'}
-          disabled={!selectedComponent || !input || executing ? 'true' : 'false'}
+        <Button
+          variant="dark"
+          disabled={!selectedComponent || !input || executing}
           on:click={() => handleDoCommand(selectedComponent, input)}
-        />
+        >
+          {executing ? 'Running...' : 'Do'}
+        </Button>
       </div>
       <div class="h-full w-full">
-        <p class="text-sm">
-          Output
-        </p>
+        <p class="text-sm">Output</p>
         <div class="h-[250px] w-full border border-medium p-2">
           <v-code-editor
             language="json"
@@ -111,5 +112,5 @@ const namesToPrettySelect = (resourcesToPretty: commonApi.ResourceName.AsObject[
         </div>
       </div>
     </div>
-  </div>
+  </svelte:fragment>
 </Collapse>

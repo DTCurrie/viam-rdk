@@ -1,420 +1,306 @@
-<script lang="ts">
-
-import { ArmClient, type Pose, type ServiceError } from '@viamrobotics/sdk';
-import { copyToClipboard } from '@/lib/copy-to-clipboard';
-import { displayError } from '@/lib/error';
-import { roundTo2Decimals } from '@/lib/math';
-import { rcLogConditionally } from '@/lib/log';
-import Collapse from '@/lib/components/collapse.svelte';
-import { useRobotClient } from '@/hooks/robot-client';
-
-interface ArmStatus {
-  pos_pieces: {
-    endPosition: string[]
-    endPositionValue: number
-  }[]
-  joint_pieces: {
-    joint: number
-    jointValue: number
-  }[]
+<script
+  lang="ts"
+  context="module"
+>
+// TODO: Export this interface from the TS-SDK so it can be used here
+export interface JointPositions {
+  valuesList: number[];
 }
 
-type Field = 'x' | 'y' | 'z' | 'oX' | 'oY' | 'oZ' | 'theta'
+const DEFAULT_POSE: Pose = {
+  x: 0,
+  y: 0,
+  z: 0,
+  oX: 0,
+  oY: 0,
+  oZ: 0,
+  theta: 0,
+};
+</script>
+
+<script lang="ts">
+import { ArmClient, type Pose } from '@viamrobotics/sdk';
+import round from 'lodash/round';
+import { copyToClipboard } from '@/lib/copy-to-clipboard';
+import { displayError } from '@/lib/error';
+import Collapse from '@/lib/components/collapse.svelte';
+import { useRobotClient } from '@/hooks/robot-client';
+import {
+  scheduleAsyncInterval,
+  type IntervalCanceller,
+  Breadcrumbs,
+  Button,
+  IconButton,
+  Label,
+  NumericInput,
+} from '@viamrobotics/prime-core';
+import { createRequestLogger, createLogger } from '@/lib/logger';
+import IncrementControls from './increment-controls.svelte';
 
 export let name: string;
-export let status: {
-  is_moving: boolean
-  end_position: Record<string, number>
-  joint_positions: { values: number[]}
-} | undefined;
 
 const { robotClient } = useRobotClient();
+const logger = createLogger(name);
 
-let modifyAll = false;
+let cancelStatus: IntervalCanceller;
 
-const fieldSetters = [
-  ['x', 'X'],
-  ['y', 'Y'],
-  ['z', 'Z'],
-  ['theta', 'Theta'],
-  ['o_x', 'OX'],
-  ['o_y', 'OY'],
-  ['o_z', 'OZ'],
-] as const;
+$: isEditing = false;
+$: isMoving = false;
+$: endPosition = {} as Pose;
+$: jointPositions = { valuesList: [] } as JointPositions;
 
-$: posPieces = fieldSetters.map((setter) => {
-  const [endPositionField] = setter;
-  return {
-    endPosition: setter,
-    endPositionValue: status?.end_position[endPositionField!] || 0,
-  };
-});
+$: endPositionPieces = Object.entries(endPosition).map(([position, value]) => [
+  position,
+  round(value, 2),
+]) as [keyof Pose, number][];
 
-/*
- * this conditional is in place so the RC card renders when
- * the fake arm is not using any kinematics file
- */
-$: jointPieces = status?.joint_positions.values.map((value, index) => {
-  return {
-    joint: index,
-    jointValue: value ?? 0,
-  };
-}) ?? [{ joint: 0, jointValue: 100 }];
+$: jointPositionPieces = jointPositions.valuesList.map((value, joint) => ({
+  joint,
+  value: round(value ?? 0, 2),
+})) ?? [{ joint: 0, value: 100 }];
 
-const fieldMap = [
-  ['x', 'x'],
-  ['y', 'y'],
-  ['z', 'z'],
-  ['theta', 'theta'],
-  ['o_x', 'oX'],
-  ['o_y', 'oY'],
-  ['o_z', 'oZ'],
-] as const;
+$: editedEndPositions = [] as {
+  position: keyof Pose;
+  value: number;
+}[];
 
-const updateFieldMap: Record<string, Field> = {
-  X: 'x',
-  Y: 'y',
-  Z: 'z',
-  Theta: 'theta',
-  OX: 'oX',
-  OY: 'oY',
-  OZ: 'oZ',
-} as const;
+$: editedJointPieces = [] as { joint: number; value: number }[];
 
-let modifyAllStatus: ArmStatus = {
-  pos_pieces: [],
-  joint_pieces: [],
-};
+const armClient = new ArmClient(
+  $robotClient,
+  name,
+  createRequestLogger(name, 'arm request')
+);
 
-const armClient = new ArmClient($robotClient, name, { requestLogger: rcLogConditionally });
+const stop = async (event: Event) => {
+  event.stopPropagation();
 
-const stop = async () => {
   try {
     await armClient.stop();
   } catch (error) {
-    displayError(error as ServiceError);
+    displayError(error);
   }
 };
 
-const armModifyAllDoEndPosition = async () => {
-  const newPieces = modifyAllStatus.pos_pieces;
+const moveToPosition = async () => {
+  const pieces = [...editedEndPositions];
+  const next: Pose = { ...DEFAULT_POSE };
 
-  const newPose: Pose = {
-    x: 0,
-    y: 0,
-    z: 0,
-    oX: 0,
-    oY: 0,
-    oZ: 0,
-    theta: 0,
-  };
-
-  for (const newPiece of newPieces) {
-    const [, poseField] = newPiece.endPosition;
-    const field: Field = updateFieldMap[poseField!]!;
-    newPose[field] = Number(newPiece.endPositionValue);
+  for (const { position, value } of pieces) {
+    next[position] = Number(value);
   }
 
   try {
-    await armClient.moveToPosition(newPose);
+    await armClient.moveToPosition(next);
+    endPosition = next;
   } catch (error) {
-    displayError(error as ServiceError);
+    displayError(error);
   }
 
-  modifyAll = false;
+  isEditing = false;
 };
 
-const armModifyAllDoJoint = async () => {
-  const arm = status!;
-  const newList = arm.joint_positions.values;
-  const newPieces = modifyAllStatus.joint_pieces;
+const moveToJointPositions = async () => {
+  const next = [...jointPositions.valuesList];
+  const pieces = [...editedJointPieces];
 
-  for (let i = 0; i < newPieces.length && i < newList.length; i += 1) {
-    newList[newPieces[i]!.joint] = newPieces[i]!.jointValue;
+  for (const { joint, value } of pieces) {
+    next[joint] = value;
   }
 
   try {
-    await armClient.moveToJointPositions(newList);
+    await armClient.moveToJointPositions(next);
+    jointPositions = { valuesList: next };
   } catch (error) {
-    displayError(error as ServiceError);
+    displayError(error);
   }
 
-  modifyAll = false;
+  isEditing = false;
 };
 
-const armEndPositionInc = async (updateField: string | undefined, amount: number) => {
-  if (updateField === undefined) {
-    return;
+const incrementPosition = async (field: string, amount: number) => {
+  const key = field as keyof Pose;
+  const next: Pose = { ...DEFAULT_POSE };
+  const adjustedAmount =
+    key[0] === 'o' || key[0] === 'O' ? amount / 100 : amount;
+
+  for (const [position, value] of endPositionPieces) {
+    next[position] = Number(value);
   }
 
-  const adjustedAmount = updateField[0] === 'o' || updateField[0] === 'O' ? amount / 100 : amount;
-  const arm = status!;
-  const old = arm.end_position;
-
-  const newPose: Pose = {
-    x: 0,
-    y: 0,
-    z: 0,
-    oX: 0,
-    oY: 0,
-    oZ: 0,
-    theta: 0,
-  };
-
-  for (const [endPositionField, poseField] of fieldMap) {
-    const endPositionValue = old[endPositionField] || 0;
-    const field: Field = poseField;
-    newPose[field] = Number(endPositionValue);
-  }
-
-  const field: Field = updateFieldMap[updateField]!;
-  newPose[field] += adjustedAmount;
+  next[key] += adjustedAmount;
 
   try {
-    await armClient.moveToPosition(newPose);
+    await armClient.moveToPosition(next);
+    endPosition = next;
   } catch (error) {
-    displayError(error as ServiceError);
+    displayError(error);
   }
 };
 
-const armJointInc = async (field: number, amount: number) => {
-  const arm = status!;
-  const newList = arm.joint_positions.values;
-  newList[field] += amount;
+const incrementJointPosition = async (field: string, amount: number) => {
+  const next = [...jointPositions.valuesList];
+  next[Number(field)] += amount;
 
   try {
-    await armClient.moveToJointPositions(newList);
+    await armClient.moveToJointPositions(next);
+    jointPositions = { valuesList: next };
   } catch (error) {
-    displayError(error as ServiceError);
+    displayError(error);
   }
 };
 
-const armHome = async () => {
-  const arm = status!;
-  const newList = arm.joint_positions.values;
+const moveJointPositionsToHome = async () => {
+  const next = [...jointPositions.valuesList];
 
-  for (let i = 0; i < newList.length; i += 1) {
-    newList[i] = 0;
+  for (let i = 0; i < next.length; i += 1) {
+    next[i] = 0;
   }
 
   try {
-    await armClient.moveToJointPositions(newList);
+    await armClient.moveToJointPositions(next);
+    jointPositions = { valuesList: next };
   } catch (error) {
-    displayError(error as ServiceError);
+    displayError(error);
   }
 };
 
-const armModifyAll = () => {
-  const nextPos = [];
-  const nextJoint = [];
-
-  for (const posPiece of posPieces) {
-    nextPos.push({
-      endPosition: [...posPiece!.endPosition],
-      endPositionValue: roundTo2Decimals(posPiece!.endPositionValue),
-    });
-  }
-
-  for (const jointPiece of jointPieces) {
-    nextJoint.push({
-      joint: jointPiece!.joint,
-      jointValue: roundTo2Decimals(jointPiece!.jointValue),
-    });
-  }
-
-  modifyAllStatus = {
-    pos_pieces: nextPos,
-    joint_pieces: nextJoint,
-  };
-  modifyAll = true;
-};
-
-const armCopyPosition = () => {
-  // eslint-disable-next-line unicorn/no-array-reduce
-  copyToClipboard(JSON.stringify(posPieces.reduce((acc, cur) => {
-    return {
-      ...acc,
-      [`${cur.endPosition[0]}`]: cur.endPositionValue,
-    };
-  }, {})));
-};
+const armModifyAll = () => (isEditing = true);
+const armCopyPosition = () => copyToClipboard(JSON.stringify(endPosition));
 
 const armCopyJoints = () => {
-  // eslint-disable-next-line unicorn/no-array-reduce
-  copyToClipboard(JSON.stringify(jointPieces.reduce((acc, cur) => {
-    return {
-      ...acc,
-      [`${cur.joint}`]: cur.jointValue,
-    };
-  }, {})));
+  const jointMap: Record<string, number> = {};
+  for (const { joint, value } of jointPositionPieces) {
+    jointMap[joint] = value;
+  }
+
+  copyToClipboard(JSON.stringify(jointMap));
 };
 
+const getStatus = async () => {
+  try {
+    isMoving = await armClient.isMoving();
+    endPosition = await armClient.getEndPosition();
+    jointPositions = (await armClient.getJointPositions()).toObject();
+  } catch (error) {
+    logger.error(`error getting ${name}'s arm status`, error);
+  }
+};
+
+const handleToggle = async ({ detail }: CustomEvent<boolean>) => {
+  if (detail) {
+    await getStatus();
+    cancelStatus = scheduleAsyncInterval(getStatus, 1000);
+  } else {
+    cancelStatus();
+  }
+};
 </script>
 
-<Collapse title={name}>
-  <v-breadcrumbs
-    slot="title"
-    crumbs="arm"
+<Collapse on:toggle={handleToggle}>
+  <svelte:fragment slot="title">{name}</svelte:fragment>
+  <Breadcrumbs
+    slot="breadcrumbs"
+    crumbs={['arm']}
   />
 
-  <v-button
-    slot="header"
+  <Button
+    slot="addon"
     variant="danger"
     icon="stop-circle-outline"
-    label="Stop"
-    on:click|stopPropagation={stop}
-  />
+    on:click={stop}
+  >
+    Stop
+  </Button>
 
-  <div class="border border-t-0 border-medium p-4 text-sm">
-    {#if status}
-      <div class="flex flex-wrap gap-12">
-        <div>
-          <h3 class="mb-2 font-bold flex items-center gap-2">
-            End position (mms)
-            <v-button
-              variant='icon'
-              tooltip='Copy to clipboard'
-              icon='content-copy'
-              on:click={armCopyPosition}
-            />
-          </h3>
-
-          <div class="flex flex-col gap-1 pb-1">
-            {#if modifyAll}
-              {#each modifyAllStatus.pos_pieces as piece (piece.endPosition[0])}
-                <label class="flex gap-2 items-center">
-                  <p class='min-w-[3rem] text-right'>{piece.endPosition[1]}</p>
-                  <input
-                    type='number'
-                    bind:value={piece.endPositionValue}
-                    class="
-                      w-full py-1.5 px-2 leading-tight text-xs h-[30px] border outline-none appearance-none
-                      pl-2.5 bg-white border-light hover:border-medium focus:border-gray-9
-                    "
-                  />
-                </label>
-              {/each}
-              <v-button
-                icon='play-circle-filled'
-                label="Go"
-                class='mt-2 text-right'
-                on:click={armModifyAllDoEndPosition}
-              />
-
-            {:else}
-              {#each posPieces as piece (piece.endPosition[0])}
-                <div class='flex gap-1'>
-                  <h4 class='self-center justify-self-end min-w-[3rem] text-right pr-2'>
-                    {piece.endPosition[1]}
-                  </h4>
-                  <v-button
-                    label="--"
-                    on:click={() => armEndPositionInc(piece.endPosition[1], -10)}
-                  />
-                  <v-button
-                    label="-"
-                    on:click={() => armEndPositionInc(piece.endPosition[1], -1)}
-                  />
-                  <p class='place-self-center min-w-[5rem] text-xs flex place-content-center'>
-                    {piece.endPositionValue.toFixed(2)}
-                  </p>
-                  <v-button
-                    label="+"
-                    on:click={() => armEndPositionInc(piece.endPosition[1], 1)}
-                  />
-                  <v-button
-                    label="++"
-                    on:click={() => armEndPositionInc(piece.endPosition[1], 10)}
-                  />
-                </div>
-              {/each}
-            {/if}
-          </div>
-        </div>
-
-        <div>
-          <h3 class="mb-2 font-bold flex items-center gap-2">
-            Joints (degrees)
-            <v-button
-              variant='icon'
-              tooltip='Copy to clipboard'
-              icon='content-copy'
-              on:click={armCopyJoints}
-            />
-          </h3>
-
-          <div class="flex flex-col gap-1 pb-1">
-            {#if modifyAll}
-              {#each modifyAllStatus.joint_pieces ?? [] as piece (piece.joint)}
-                <label class="flex gap-2 items-center">
-                  <p class='min-w-[3rem] text-right'>Joint {piece.joint}</p>
-                  <input
-                    type='number'
-                    bind:value={piece.jointValue}
-                    class="
-                      w-full py-1.5 px-2 leading-tight text-xs h-[30px] border outline-none appearance-none
-                      pl-2.5 bg-white border-light hover:border-medium focus:border-gray-9
-                    "
-                  />
-                </label>
-              {/each}
-              <v-button
-                class='mt-2 text-right'
-                icon='play-circle-outline'
-                label="Go"
-                on:click={armModifyAllDoJoint}
-              />
-
-            {:else}
-              {#each jointPieces as piece (piece.joint)}
-                <div class='flex gap-1'>
-                  <h4 class="self-center justify-self-end min-w-[4rem] text-right pr-2">
-                    Joint {piece.joint}
-                  </h4>
-                  <v-button
-                    label="--"
-                    on:click={() => armJointInc(piece.joint, -10)}
-                  />
-                  <v-button
-                    label="-"
-                    on:click={() => armJointInc(piece.joint, -1)}
-                  />
-                  <p class='place-self-center min-w-[5rem] text-xs flex place-content-center'>
-                    {piece.jointValue.toFixed(2)}
-                  </p>
-                  <v-button
-                    label="+"
-                    on:click={() => armJointInc(piece.joint, 1)}
-                  />
-                  <v-button
-                    label="++"
-                    on:click={() => armJointInc(piece.joint, 10)}
-                  />
-                </div>
-              {/each}
-            {/if}
-          </div>
-        </div>
-      </div>
-      <div class='mt-6 flex gap-2'>
-        {#if modifyAll}
-          <v-button
-            label="Cancel"
-            on:click={() => {
-              modifyAll = false;
-            }}
+  <svelte:fragment slot="content">
+    <div class="flex flex-col items-center lg:flex-row justify-evenly">
+      <div class="flex flex-col gap-1 pb-1">
+        <h3 class="mb-2 font-bold flex items-center gap-2">
+          End position (mms)
+          <IconButton
+            label="Copy to clipboard"
+            icon="content-copy"
+            on:click={armCopyPosition}
           />
+        </h3>
+
+        {#if isEditing}
+          {#each editedEndPositions as { position, value } (position)}
+            <Label position="left">
+              <span class="w-12">{position}</span>
+              <NumericInput
+                slot="input"
+                bind:value
+              />
+            </Label>
+          {/each}
+          <Button
+            icon="play-circle-outline"
+            on:click={moveToPosition}
+          >
+            Go
+          </Button>
         {:else}
-          <v-button
-            label="Modify all"
-            on:click={armModifyAll}
-          />
-          <v-button
-            label="Go home"
-            on:click={armHome}
-          />
+          {#each endPositionPieces as [piece, value] (piece)}
+            <IncrementControls
+              label={piece}
+              {value}
+              increment={incrementPosition}
+            />
+          {/each}
         {/if}
       </div>
+
+      <div class="flex flex-col gap-1 pb-1">
+        <h3 class="mb-2 font-bold flex items-center gap-2">
+          Joints (degrees)
+          <IconButton
+            label="Copy to clipboard"
+            icon="content-copy"
+            on:click={armCopyJoints}
+          />
+        </h3>
+
+        {#if isEditing}
+          {#each editedJointPieces as { joint, value } (joint)}
+            <Label position="left">
+              <span class="w-12">Joint {joint}</span>
+              <NumericInput
+                slot="input"
+                bind:value
+              />
+            </Label>
+          {/each}
+          <Button
+            icon="play-circle-outline"
+            on:click={moveToJointPositions}
+          >
+            Go
+          </Button>
+        {:else}
+          {#each jointPositionPieces as { joint, value } (joint)}
+            <IncrementControls
+              title="Joint"
+              label={`${joint}`}
+              {value}
+              increment={incrementJointPosition}
+            />
+          {/each}
+        {/if}
+      </div>
+    </div>
+    {#if isEditing}
+      <Button
+        on:click={() => {
+          isEditing = false;
+        }}
+      >
+        Cancel
+      </Button>
+    {:else}
+      <Button on:click={armModifyAll}>Modify all</Button>
+      <Button on:click={moveJointPositionsToHome}>Go home</Button>
     {/if}
-  </div>
+  </svelte:fragment>
 </Collapse>

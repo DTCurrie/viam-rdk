@@ -1,6 +1,6 @@
 import type { commonApi } from '@viamrobotics/sdk';
 
-type Resource = commonApi.ResourceName.AsObject
+type Resource = commonApi.ResourceName.AsObject;
 
 export const sortByName = (item1: Resource, item2: Resource) => {
   if (item1.name > item2.name) {
@@ -41,6 +41,31 @@ export const resourceNameToString = (resource: Resource) => {
   return strName;
 };
 
+export const stringToResourceName = (nameStr: string) => {
+  const [prefix, suffix] = nameStr.split('/');
+  let name = '';
+
+  if (suffix) {
+    name = suffix;
+  }
+
+  const subtypeParts = prefix!.split(':');
+  if (subtypeParts.length > 3) {
+    throw new Error('more than 2 colons in resource name string');
+  }
+
+  if (subtypeParts.length < 3) {
+    throw new Error('less than 2 colons in resource name string');
+  }
+
+  return {
+    namespace: subtypeParts[0],
+    type: subtypeParts[1],
+    subtype: subtypeParts[2],
+    name,
+  };
+};
+
 export const filterSubtype = (
   resources: Resource[],
   subtype: string,
@@ -74,8 +99,8 @@ export const filterWithStatus = (
   status: Record<string, unknown>,
   subtype: string
 ) => {
-  return resources
-    .filter((resource) =>
-      resource.subtype === subtype &&
-      status[resourceNameToString(resource)]);
+  return resources.filter(
+    (resource) =>
+      resource.subtype === subtype && status[resourceNameToString(resource)]
+  );
 };

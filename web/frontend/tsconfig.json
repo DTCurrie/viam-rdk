@@ -6,11 +6,19 @@
     "outDir": "dist",
     "baseUrl": "./",
     "paths": {
-      "@/*": ["src/*"],
+      "@/*": ["src/*"]
     },
-
     "noPropertyAccessFromIndexSignature": false,
-    "exactOptionalPropertyTypes": false,
+    "exactOptionalPropertyTypes": false
   },
-  "include": ["src/**/*.ts", "src/**/*.d.ts", "src/**/*.svelte"],
+  "include": [
+    ".eslintrc.cjs",
+    ".prettierrc.cjs",
+    "postcss.config.js",
+    "svelte.config.js",
+    "tailwind.config.ts",
+    "src/**/*.ts",
+    "src/**/*.d.ts",
+    "src/**/*.svelte"
+  ]
 }

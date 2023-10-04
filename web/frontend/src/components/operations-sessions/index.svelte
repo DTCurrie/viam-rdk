@@ -1,12 +1,12 @@
 <script lang="ts">
-
 import { robotApi } from '@viamrobotics/sdk';
 import { displayError } from '@/lib/error';
 import { rcLogConditionally } from '@/lib/log';
 import Collapse from '@/lib/components/collapse.svelte';
 import { useRobotClient } from '@/hooks/robot-client';
 
-const { robotClient, operations, sessions, sessionsSupported, rtt } = useRobotClient();
+const { robotClient, operations, sessions, sessionsSupported, rtt } =
+  useRobotClient();
 
 const killOperation = (id: string) => {
   const req = new robotApi.CancelOperationRequest();
@@ -33,13 +33,12 @@ const peerConnectionType = (info?: robotApi.PeerConnectionInfo.AsObject) => {
     }
   }
 };
-
 </script>
 
 <Collapse title={$sessionsSupported ? 'Operations & Sessions' : 'Operations'}>
   <div class="border border-t-0 border-medium p-4 text-xs">
     <div class="mb-4 flex gap-2 justify-end items-center">
-      <label>RTT:</label>
+      <span>RTT:</span>
       {#if $rtt < 50}
         <v-badge
           variant="green"
@@ -80,7 +79,10 @@ const peerConnectionType = (info?: robotApi.PeerConnectionInfo.AsObject) => {
             <td class="border border-medium p-2">{op.method}</td>
             <td class="border border-medium p-2">{elapsed} ms</td>
             <td class="border border-medium p-2 text-center">
-              <v-button label="Kill" on:click={() => killOperation(op.id)} />
+              <v-button
+                label="Kill"
+                on:click={() => killOperation(op.id)}
+              />
             </td>
           </tr>
         {/each}

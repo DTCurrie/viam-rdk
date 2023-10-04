@@ -1,223 +1,293 @@
 <script lang="ts">
-
-import { notify } from '@viamrobotics/prime';
+import cx from 'classnames';
 import { displayError } from '@/lib/error';
-import { rcLogConditionally } from '@/lib/log';
-import { BoardClient, type ServiceError } from '@viamrobotics/sdk';
+import { BoardClient } from '@viamrobotics/sdk';
 import Collapse from '@/lib/components/collapse.svelte';
 import { useRobotClient } from '@/hooks/robot-client';
+import { createLogger, createRequestLogger } from '@/lib/logger';
+import {
+  Breadcrumbs,
+  scheduleAsyncInterval,
+  type IntervalCanceller,
+  Label,
+  NumericInput,
+  Button,
+  Select,
+} from '@viamrobotics/prime-core';
 
 export let name: string;
-export let status: undefined | {
-  analogs: Record<string, { value: number }>
-  digital_interrupts: Record<string, { value: number }>
-};
 
 const { robotClient } = useRobotClient();
+const logger = createLogger(name);
 
-const boardClient = new BoardClient($robotClient, name, { requestLogger: rcLogConditionally });
+const boardClient = new BoardClient(
+  $robotClient,
+  name,
+  createRequestLogger(name, 'board request')
+);
 
-let getPin = '';
-let setPin = '';
-let setLevel = '';
-let pwm = '';
-let pwmFrequency = '';
-let getPinMessage = '';
+let pinInput: HTMLInputElement;
+let pwmInput: HTMLInputElement;
+let frequencyInput: HTMLInputElement;
+let cancelStatus: IntervalCanceller;
 
-const getGPIO = async () => {
+$: pin = '';
+$: pwm = -1;
+$: frequency = -1;
+
+$: state = '';
+$: currentPwm = '-';
+$: currentFrequency = '-';
+
+$: analogEntries = [] as [string, number][];
+$: digitalInterruptEntries = [] as [string, number][];
+
+$: isNoPin = pin === '';
+
+const clearMessages = () => {
+  state = '';
+  currentPwm = '-';
+  currentFrequency = '-';
+};
+
+const setPin = async () => {
+  clearMessages();
+  pin = pinInput?.value ?? '';
+  await getPinStatus();
+};
+
+const getPinStatus = async () => {
+  if (!pin) {
+    return;
+  }
+
   try {
-    const isHigh = await boardClient.getGPIO(getPin);
-    getPinMessage = `Pin: ${getPin} is ${isHigh ? 'high' : 'low'}`;
+    const isHigh = await boardClient.getGPIO(pin);
+    state = isHigh ? 'high' : 'low';
+
+    const dutyCyclePct = await boardClient.getPWM(pin);
+    currentPwm = `${dutyCyclePct * 100}%`;
+
+    const frequencyHz = await boardClient.getPWMFrequency(pin);
+    currentFrequency = `${frequencyHz}Hz`;
   } catch (error) {
-    notify.danger((error as ServiceError).message);
+    displayError(error);
   }
 };
 
-const setGPIO = async () => {
+const setGpio = async () => {
   try {
-    await boardClient.setGPIO(setPin, setLevel === 'high');
+    await boardClient.setGPIO(pin, state === 'high');
   } catch (error) {
-    displayError(error as ServiceError);
+    displayError(error);
   }
 };
 
-const getPWM = async () => {
+const setPwm = async () => {
   try {
-    const dutyCyclePct = await boardClient.getPWM(getPin);
-    getPinMessage = `Pin ${getPin}'s duty cycle is ${dutyCyclePct * 100}%.`;
+    await boardClient.setPWM(pin, pwm / 100);
   } catch (error) {
-    displayError(error as ServiceError);
+    displayError(error);
   }
 };
 
-const setPWM = async () => {
+const setFrequency = async () => {
   try {
-    await boardClient.setPWM(setPin, Number.parseFloat(pwm) / 100);
+    await boardClient.setPWMFrequency(pin, frequency);
   } catch (error) {
-    displayError(error as ServiceError);
+    displayError(error);
   }
 };
 
-const getPWMFrequency = async () => {
+const getStatus = async () => {
   try {
-    const frequencyHz = await boardClient.getPWMFrequency(getPin);
-    getPinMessage = `Pin ${getPin}'s frequency is ${frequencyHz}Hz.`;
+    const { analogs, digitalInterrupts } = await boardClient.getStatus();
+    analogEntries = Object.entries(analogs).sort(([a], [b]) =>
+      a > b ? 1 : -1
+    );
+
+    digitalInterruptEntries = Object.entries(digitalInterrupts).sort(
+      ([a], [b]) => (a > b ? 1 : -1)
+    );
+
+    await getPinStatus();
   } catch (error) {
-    displayError(error as ServiceError);
+    logger.error(`error getting ${name}'s board status`, error);
   }
 };
 
-const setPWMFrequency = async () => {
-  try {
-    await boardClient.setPWMFrequency(setPin, Number.parseFloat(pwmFrequency));
-  } catch (error) {
-    displayError(error as ServiceError);
+const handleToggle = async ({ detail }: CustomEvent<boolean>) => {
+  if (detail) {
+    await getStatus();
+    cancelStatus = scheduleAsyncInterval(getStatus, 1000);
+  } else {
+    cancelStatus();
   }
 };
-
-const handleGetPinInput = (event: CustomEvent) => {
-  getPin = event.detail.value;
-};
-
-const handleSetPinInput = (event: CustomEvent) => {
-  setPin = event.detail.value;
-};
-
-const handlePwmInput = (event: CustomEvent) => {
-  pwm = event.detail.value;
-};
-
-const handlePwmFrequencyInput = (event: CustomEvent) => {
-  pwmFrequency = event.detail.value;
-};
-
 </script>
 
-<Collapse title={name}>
-  <v-breadcrumbs
-    slot="title"
-    crumbs="board"
+<Collapse on:toggle={handleToggle}>
+  <svelte:fragment slot="title">{name}</svelte:fragment>
+  <Breadcrumbs
+    slot="breadcrumbs"
+    crumbs={['board']}
   />
-  <div class="overflow-auto border border-t-0 border-medium p-4">
-    <h3 class="mb-2">
-      Analogs
-    </h3>
-    <table class="mb-4 table-auto border border-medium">
-      {#each Object.entries(status?.analogs ?? {}) as [analogName, analog] (analogName)}
-        <tr>
-          <th class="border border-medium p-2">
-            {analogName}
-          </th>
-          <td class="border border-medium p-2">
-            {analog.value || 0}
-          </td>
-        </tr>
-      {/each}
-    </table>
 
-    <h3 class="mb-2">
-      Digital Interrupts
-    </h3>
-    <table class="mb-4 w-full table-auto border border-medium">
-      {#each Object.entries(status?.digital_interrupts ?? {}) as [interruptName, interrupt] (interruptName)}
-        <tr>
-          <th class="border border-medium p-2">
-            {interruptName}
-          </th>
-          <td class="border border-medium p-2">
-            {interrupt.value || 0}
-          </td>
-        </tr>
-      {/each}
-    </table>
+  <div slot="content">
+    <div class="flex flex-col lg:flex-row gap-2">
+      <div class="flex flex-col gap-2 w-full">
+        <div class="w-full">
+          <h3 class="mb-2 font-bold text-lg">Analogs</h3>
+          {#if analogEntries.length > 0}
+            <ul>
+              {#each analogEntries as [analogName, analog] (analogName)}
+                <li><span class="font-bold">{analogName}: </span>{analog}</li>
+              {/each}
+            </ul>
+          {:else}
+            <p>No analogs configured.</p>
+          {/if}
+        </div>
 
-    <h3 class="mb-2">
-      GPIO
-    </h3>
-    <table class="mb-4 w-full table-auto border border-medium">
-      <tr>
-        <th class="border border-medium p-2">
-          Get
-        </th>
-        <td class="border border-medium p-2">
-          <div class="flex flex-wrap items-end gap-2">
-            <v-input
-              label="Pin"
-              type="integer"
-              value={getPin}
-              on:input={handleGetPinInput}
-            />
-            <v-button
-              label="Get Pin State"
-              on:click={getGPIO}
-            />
-            <v-button
-              label="Get PWM Duty Cycle"
-              on:click={getPWM}
-            />
-            <v-button
-              label="Get PWM Frequency"
-              on:click={getPWMFrequency}
-            />
-            <span class="py-2">
-              {getPinMessage}
-            </span>
-          </div>
-        </td>
-      </tr>
+        <div class="w-full">
+          <h3 class="mb-2 font-bold text-lg">Digital interrupts</h3>
+          {#if analogEntries.length > 0}
+            <ul>
+              {#each digitalInterruptEntries as [interruptName, interrupt] (interruptName)}
+                <li>
+                  <span class="font-bold">{interruptName}: </span>{interrupt}
+                </li>
+              {/each}
+            </ul>
+          {:else}
+            <p>No digital interrupts configured.</p>
+          {/if}
+        </div>
+      </div>
 
-      <tr>
-        <th class="border border-medium p-2">
-          Set
-        </th>
-        <td class="p-2">
-          <div class="flex flex-wrap items-end gap-2">
-            <v-input
-              value={setPin}
-              type="integer"
-              class="mr-2"
-              label="Pin"
-              on:input={handleSetPinInput}
-            />
-            <select
-              bind:value={setLevel}
-              class="mr-2 h-[30px] border border-medium bg-white text-sm"
+      <div class="w-full">
+        <h3 class="mb-2 font-bold text-lg">GPIO</h3>
+        <div class="flex flex-col gap-2">
+          <form
+            class="flex flex-row gap-2 items-end"
+            on:submit|preventDefault={setPin}
+          >
+            <Label
+              required
+              cx="w-full"
             >
-              <option>low</option>
-              <option>high</option>
-            </select>
-            <v-button
-              class="mr-2"
-              label="Set Pin State"
-              on:click={setGPIO}
-            />
-            <v-input
-              value={pwm}
-              label="PWM Duty Cycle"
-              type="number"
-              class="mr-2"
-              on:input={handlePwmInput}
-            />
-            <v-button
-              class="mr-2"
-              label="Set PWM Duty Cycle"
-              on:click={setPWM}
-            />
-            <v-input
-              value={pwmFrequency}
-              label="PWM Frequency"
-              type="number"
-              class="mr-2"
-              on:input={handlePwmFrequencyInput}
-            />
-            <v-button
-              class="mr-2"
-              label="Set PWM Frequency"
-              on:click={setPWMFrequency}
-            />
-          </div>
-        </td>
-      </tr>
-    </table>
+              Pin
+              <NumericInput
+                slot="input"
+                type="integer"
+                required
+                bind:input={pinInput}
+              />
+            </Label>
+            <Button
+              type="submit"
+              cx="h-7.5 w-40"
+            >
+              Get Pin Status
+            </Button>
+          </form>
+
+          <form on:submit|preventDefault={setGpio}>
+            <Label
+              cx={cx('flex gap-2 w-full', {
+                'text-disabled': isNoPin,
+              })}
+              disabled={isNoPin}
+            >
+              State: {state}
+              <div
+                slot="input"
+                class="flex gap-2 w-full"
+              >
+                <Select
+                  placeholde="Pin state"
+                  disabled={isNoPin}
+                  bind:value={state}
+                >
+                  <option>low</option>
+                  <option>high</option>
+                </Select>
+                <Button
+                  type="submit"
+                  cx="w-40"
+                  disabled={isNoPin}
+                >
+                  Set state
+                </Button>
+              </div>
+            </Label>
+          </form>
+
+          <form on:submit|preventDefault={setPwm}>
+            <Label
+              cx={cx('flex gap-2 w-full', {
+                'text-disabled': isNoPin,
+              })}
+              disabled={isNoPin}
+            >
+              PWM duty cycle: {currentPwm}
+              <div
+                slot="input"
+                class="flex gap-2"
+              >
+                <NumericInput
+                  type="number"
+                  disabled={isNoPin}
+                  bind:input={pwmInput}
+                  on:change={() =>
+                    (pwm = parseFloat(pwmInput?.value)
+                      ? parseFloat(pwmInput?.value)
+                      : -1)}
+                />
+                <Button
+                  type="submit"
+                  cx="w-40"
+                  disabled={isNoPin}
+                >
+                  Set duty cycle
+                </Button>
+              </div>
+            </Label>
+          </form>
+
+          <form on:submit|preventDefault={setFrequency}>
+            <Label
+              cx={cx('flex gap-2 w-full', {
+                'text-disabled': isNoPin,
+              })}
+              disabled={isNoPin}
+            >
+              PWM frequency: {currentFrequency}
+              <div
+                slot="input"
+                class="flex gap-2"
+              >
+                <NumericInput
+                  type="number"
+                  disabled={isNoPin}
+                  bind:input={frequencyInput}
+                  on:change={() =>
+                    (frequency = parseFloat(frequencyInput?.value)
+                      ? parseFloat(frequencyInput?.value)
+                      : -1)}
+                />
+                <Button
+                  type="submit"
+                  cx="w-40"
+                  disabled={isNoPin}
+                >
+                  Set frequency
+                </Button>
+              </div>
+            </Label>
+          </form>
+        </div>
+      </div>
+    </div>
   </div>
 </Collapse>

@@ -1,37 +1,43 @@
 <script lang="ts">
-
 import { onMount } from 'svelte';
 import { displayError } from '@/lib/error';
-import { CameraClient, type ServiceError } from '@viamrobotics/sdk';
+import { CameraClient } from '@viamrobotics/sdk';
 import { selectedMap } from '@/lib/camera-state';
 import { useRobotClient, useDisconnect } from '@/hooks/robot-client';
+import {
+  scheduleAsyncInterval,
+  type IntervalCanceller,
+  Button,
+} from '@viamrobotics/prime-core';
 
 export let cameraName: string;
 export let showExportScreenshot: boolean;
-export let refreshRate: string | undefined;
+export let refreshRate: keyof typeof selectedMap | undefined;
 export let triggerRefresh = false;
 
 const { robotClient, streamManager } = useRobotClient();
+const { stream, setSrc, remove, add } = $streamManager.getStream(
+  cameraName,
+  () => (videoEl.srcObject = $stream)
+);
 
 let imgEl: HTMLImageElement;
 let videoEl: HTMLVideoElement;
 
-let cameraFrameIntervalId = -1;
-let isLive = false;
+$: shouldBeLive = refreshRate === 'Live';
+$: isLive = false;
 
-const cameraManager = $streamManager.setCameraManager(cameraName);
+let cancelFrameInterval: IntervalCanceller;
 
-const clearFrameInterval = () => {
-  window.clearInterval(cameraFrameIntervalId);
-};
+const viewCameraFrame = async (time: number) => {
+  cancelFrameInterval();
+  await setSrc(imgEl);
 
-const viewCameraFrame = (time: number) => {
-  clearFrameInterval();
-  cameraManager.setImageSrc(imgEl);
   if (time > 0) {
-    cameraFrameIntervalId = window.setInterval(() => {
-      cameraManager.setImageSrc(imgEl);
-    }, Number(time) * 1000);
+    cancelFrameInterval = scheduleAsyncInterval(
+      () => setSrc(imgEl),
+      Number(time) * 1000
+    );
   }
 };
 
@@ -42,53 +48,45 @@ const updateCameraRefreshRate = () => {
 };
 
 const exportScreenshot = async () => {
-  let blob;
   try {
-    blob = await new CameraClient($robotClient, cameraName).renderFrame(
+    const blob = await new CameraClient($robotClient, cameraName).renderFrame(
       'image/jpeg'
     );
+
+    window.open(URL.createObjectURL(blob), '_blank');
   } catch (error) {
-    displayError(error as ServiceError);
+    displayError(error);
     return;
   }
-
-  window.open(URL.createObjectURL(blob), '_blank');
 };
 
 onMount(() => {
-  videoEl.srcObject = cameraManager.videoStream;
-
-  cameraManager.onOpen = () => {
-    videoEl.srcObject = cameraManager.videoStream;
-  };
+  videoEl.srcObject = $stream;
 });
 
-useDisconnect(() => {
+useDisconnect(async () => {
   if (isLive) {
-    cameraManager.removeStream();
+    await remove();
   }
 
-  cameraManager.onOpen = undefined;
-
   isLive = false;
-
-  clearFrameInterval();
+  cancelFrameInterval();
 });
 
 // on refreshRate change update camera and manage live connections
-$: {
-  if (isLive && refreshRate !== 'Live') {
+$: (async () => {
+  if (isLive && !shouldBeLive) {
     isLive = false;
-    cameraManager.removeStream();
+    await remove();
   }
 
-  if (isLive === false && refreshRate === 'Live') {
+  if (isLive === false && shouldBeLive) {
     isLive = true;
-    cameraManager.addStream();
+    await add();
   }
 
   updateCameraRefreshRate();
-}
+})();
 
 // Refresh camera when the trigger changes
 let lastTriggerRefresh = triggerRefresh;
@@ -96,37 +94,37 @@ $: if (lastTriggerRefresh !== triggerRefresh) {
   lastTriggerRefresh = triggerRefresh;
   updateCameraRefreshRate();
 }
-
 </script>
 
 <div class="flex flex-col gap-2">
   {#if showExportScreenshot}
-    <v-button
-      class="mb-4"
+    <Button
+      cx="mb-4"
       aria-label={`View camera: ${cameraName}`}
       icon="camera-outline"
-      label="Export screenshot"
       on:click={exportScreenshot}
-    />
+    >
+      Export screenshot
+    </Button>
   {/if}
 
   <div class="max-w-screen-md">
-    <video
-      bind:this={videoEl}
-      muted
-      autoplay
-      controls={false}
-      playsinline
-      aria-label={`${cameraName} stream`}
-      class:hidden={refreshRate !== 'Live'}
-      class="clear-both h-fit transition-all duration-300 ease-in-out"
-    />
-
-    <img
-      alt='Camera stream'
-      bind:this={imgEl}
-      class:hidden={refreshRate === 'Live'}
-      aria-label={`${cameraName} stream`}
-    >
+    {#if shouldBeLive}
+      <video
+        bind:this={videoEl}
+        muted
+        autoplay
+        controls={false}
+        playsinline
+        aria-label={`${cameraName} stream`}
+        class="clear-both h-fit transition-all duration-300 ease-in-out"
+      />
+    {:else}
+      <img
+        bind:this={imgEl}
+        alt="Camera stream"
+        aria-label={`${cameraName} stream`}
+      />
+    {/if}
   </div>
 </div>

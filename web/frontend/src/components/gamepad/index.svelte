@@ -1,23 +1,29 @@
-<script lang='ts'>
-
+<script lang="ts">
 import { onMount } from 'svelte';
 import { Timestamp } from 'google-protobuf/google/protobuf/timestamp_pb';
-import { ConnectionClosedError } from '@viamrobotics/rpc';
-import { inputControllerApi as InputController, type ServiceError } from '@viamrobotics/sdk';
-import { notify } from '@viamrobotics/prime';
-import { rcLogConditionally } from '@/lib/log';
+import {
+  inputControllerApi as InputController,
+  type ServiceError,
+} from '@viamrobotics/sdk';
 import Collapse from '@/lib/components/collapse.svelte';
 import { useRobotClient, useDisconnect } from '@/hooks/robot-client';
+import {
+  Badge,
+  Breadcrumbs,
+  Label,
+  Switch,
+  notify,
+} from '@viamrobotics/prime-core';
+import { createLogger } from '@/lib/logger';
+import { TriggerEventResponse } from '@viamrobotics/sdk/dist/gen/component/inputcontroller/v1/input_controller_pb';
+import { getErrorMessage } from '@/lib/error';
 
 export let name: string;
 
 const { robotClient } = useRobotClient();
+const logger = createLogger(name);
 
-let gamepadIdx: number | null = null;
-let gamepadConnectedPrev = false;
-let enabled = false;
-
-const curStates : Record<string, number> = ({
+const curStates: Record<string, number> = {
   X: Number.NaN,
   Y: Number.NaN,
   RX: Number.NaN,
@@ -37,126 +43,169 @@ const curStates : Record<string, number> = ({
   Select: Number.NaN,
   Start: Number.NaN,
   Menu: Number.NaN,
-});
+};
 
+let gamepadIdx: number | null = null;
+let enabled = false;
 let handle = -1;
-let prevStates: Record<string, number> = {};
-
+let prevStates: Record<keyof typeof curStates, number> = {};
 let lastError = Date.now();
-const sendEvent = (newEvent: InputController.Event) => {
+let lastTimestamp = Timestamp.fromDate(new Date());
+
+$: gamepad = gamepadIdx === null ? null : navigator.getGamepads()[gamepadIdx];
+$: connected = false;
+
+const triggerEvent = (newEvent: InputController.Event) => {
   if (!enabled) {
     return;
   }
+
   const req = new InputController.TriggerEventRequest();
   req.setController(name);
   req.setEvent(newEvent);
-  rcLogConditionally(req);
-  $robotClient.inputControllerService.triggerEvent(req, (error: ServiceError | null) => {
-    if (error) {
-      if (ConnectionClosedError.isError(error)) {
-        return;
+  logger.debug(`${name} input_controller request`, req);
+
+  return new Promise<TriggerEventResponse | ServiceError>(() => {
+    $robotClient.inputControllerService.triggerEvent(
+      req,
+      (error: ServiceError | null, res) => {
+        if (error) {
+          return error;
+        }
+
+        return res;
       }
-      const now = Date.now();
-      if (now - lastError > 1000) {
-        lastError = now;
-        notify.danger(error.message);
-      }
-    }
+    );
   });
 };
 
-let lastTS = Timestamp.fromDate(new Date());
-const nextTS = () => {
-  let nowTS = Timestamp.fromDate(new Date());
-  if (lastTS.getSeconds() > nowTS.getSeconds() ||
-    (lastTS.getSeconds() === nowTS.getSeconds() && lastTS.getNanos() > nowTS.getNanos())) {
-    nowTS = lastTS;
+const nextTimestamp = () => {
+  let now = Timestamp.fromDate(new Date());
+  const nowSeconds = now.getSeconds();
+  const nowNanos = now.getNanos();
+  const lastSeconds = lastTimestamp.getSeconds();
+  const lastNanos = lastTimestamp.getNanos();
+  const isSameSeconds = nowSeconds === lastSeconds;
+
+  if (lastSeconds > nowSeconds || (isSameSeconds && lastNanos > nowNanos)) {
+    now = lastTimestamp;
   }
-  if (nowTS.getSeconds() === lastTS.getSeconds() &&
-    nowTS.getNanos() === lastTS.getNanos()) {
-    nowTS.setNanos(nowTS.getNanos() + 1);
+
+  if (isSameSeconds && nowNanos === lastNanos) {
+    now.setNanos(nowNanos + 1);
   }
-  lastTS = nowTS;
-  return nowTS;
+
+  lastTimestamp = now;
+  return now;
 };
 
-$: currentGamepad = gamepadIdx === null ? null : navigator.getGamepads()[gamepadIdx];
-
-const connectEvent = (con: boolean) => {
-  const gamepad = currentGamepad;
-  if (
-    (con && (!gamepad || !gamepad.connected)) ||
-    (!con && !gamepadConnectedPrev)
-  ) {
+const connectEvent = async (connect: boolean) => {
+  if ((connect && !gamepad?.connected) || (!connect && !connected)) {
     return;
   }
 
-  const nowTS = nextTS();
+  const nowTS = nextTimestamp();
   try {
-    for (const ctrl of Object.keys(curStates)) {
-      const newEvent = new InputController.Event();
-      nowTS.setNanos(nowTS.getNanos() + 1);
-      newEvent.setTime(nowTS);
-      newEvent.setEvent(con ? 'Connect' : 'Disconnect');
-      newEvent.setValue(0);
-
-      if ((/X|Y|Z$/u).test(ctrl)) {
-        newEvent.setControl(`Absolute${ctrl}`);
-      } else {
-        newEvent.setControl(`Button${ctrl}`);
-      }
-
-      sendEvent(newEvent);
-    }
-  } finally {
-    lastTS = nowTS;
-  }
-};
-
-const processEvents = (connected: boolean) => {
-  if (!connected) {
-    for (const key of Object.keys(curStates)) {
-      curStates[key] = Number.NaN;
-    }
-
-    if (gamepadConnectedPrev) {
-      connectEvent(false);
-      gamepadConnectedPrev = false;
-    }
-    return;
-  } else if (!gamepadConnectedPrev) {
-    connectEvent(true);
-    gamepadConnectedPrev = true;
-  }
-
-  const nowTS = nextTS();
-
-  try {
-    for (const [key, value] of Object.entries(curStates)) {
-      if (value === prevStates[key] || (Number.isNaN(value) && Number.isNaN(prevStates[key]))) {
-        continue;
-      }
-      const newEvent = new InputController.Event();
-      nowTS.setNanos(nowTS.getNanos() + 1);
-      newEvent.setTime(nowTS);
-      if ((/X|Y|Z$/u).test(key)) {
-        newEvent.setControl(`Absolute${key}`);
-        newEvent.setEvent('PositionChangeAbs');
-      } else {
-        newEvent.setControl(`Button${key}`);
-        newEvent.setEvent(value ? 'ButtonPress' : 'ButtonRelease');
-      }
-
-      if (Number.isNaN(value)) {
-        newEvent.setEvent('Disconnect');
+    await Promise.all(
+      Object.keys(curStates).map((ctrl) => {
+        const newEvent = new InputController.Event();
+        nowTS.setNanos(nowTS.getNanos() + 1);
+        newEvent.setTime(nowTS);
+        newEvent.setEvent(connect ? 'Connect' : 'Disconnect');
         newEvent.setValue(0);
-      } else {
-        newEvent.setValue(value);
-      }
-      sendEvent(newEvent);
+
+        if (/X|Y|Z$/u.test(ctrl)) {
+          newEvent.setControl(`Absolute${ctrl}`);
+        } else {
+          newEvent.setControl(`Button${ctrl}`);
+        }
+
+        return triggerEvent(newEvent);
+      })
+    );
+  } catch (error) {
+    const now = Date.now();
+    if (now - lastError > 1000) {
+      lastError = now;
+
+      logger.error(`Error triggering connect event for gamepad ${name}`, {
+        connect,
+        error,
+      });
+
+      notify.danger(
+        getErrorMessage(error) ??
+          `Could not trigger connect event for gamepad ${name}.`
+      );
     }
   } finally {
-    lastTS = nowTS;
+    lastTimestamp = nowTS;
+  }
+};
+
+const disconnect = async () => {
+  for (const key of Object.keys(curStates)) {
+    curStates[key] = Number.NaN;
+  }
+
+  if (connected) {
+    try {
+      await connectEvent(false);
+      connected = false;
+    } catch (error) {
+      logger.error(`Error disconnecting gamepad ${name}`, {
+        error,
+      });
+
+      notify.danger(
+        getErrorMessage(error) ?? `Could not disconnet gamepad ${name}.`
+      );
+    }
+  }
+};
+
+const processEvents = async () => {
+  if (!connected) {
+    await connectEvent(true);
+    connected = true;
+  }
+
+  const nowTS = nextTimestamp();
+
+  try {
+    await Promise.all(
+      Object.entries(curStates)
+        .filter(
+          ([key, value]) =>
+            value !== prevStates[key] &&
+            Number.isNaN(value) &&
+            Number.isNaN(prevStates[key])
+        )
+        .map(([key, value]) => {
+          const newEvent = new InputController.Event();
+          nowTS.setNanos(nowTS.getNanos() + 1);
+          newEvent.setTime(nowTS);
+
+          if (/X|Y|Z$/u.test(key)) {
+            newEvent.setControl(`Absolute${key}`);
+            newEvent.setEvent('PositionChangeAbs');
+          } else {
+            newEvent.setControl(`Button${key}`);
+            newEvent.setEvent(value ? 'ButtonPress' : 'ButtonRelease');
+          }
+
+          if (Number.isNaN(value)) {
+            newEvent.setEvent('Disconnect');
+            newEvent.setValue(0);
+          } else {
+            newEvent.setValue(value);
+          }
+
+          return triggerEvent(newEvent);
+        })
+    );
+  } finally {
+    lastTimestamp = nowTS;
   }
 };
 
@@ -167,11 +216,11 @@ const checkVal = (val?: number): number => {
   return val;
 };
 
-const tick = () => {
-  const gamepad = currentGamepad;
+const tick = async () => {
+  const gamepad = gamepad;
   if (!gamepad || !gamepad.connected) {
     if (enabled) {
-      processEvents(false);
+      await disconnect();
     }
     return;
   }
@@ -202,8 +251,14 @@ const tick = () => {
   curStates.RY = trunc(gamepad.axes[3]);
   curStates.Z = trunc(gamepad.buttons[6]?.value);
   curStates.RZ = trunc(gamepad.buttons[7]?.value);
-  curStates.Hat0X = trunc((checkVal(gamepad.buttons[14]?.value) * -1) + checkVal(gamepad.buttons[15]?.value));
-  curStates.Hat0Y = trunc((checkVal(gamepad.buttons[12]?.value) * -1) + checkVal(gamepad.buttons[13]?.value));
+  curStates.Hat0X = trunc(
+    checkVal(gamepad.buttons[14]?.value) * -1 +
+      checkVal(gamepad.buttons[15]?.value)
+  );
+  curStates.Hat0Y = trunc(
+    checkVal(gamepad.buttons[12]?.value) * -1 +
+      checkVal(gamepad.buttons[13]?.value)
+  );
   curStates.South = trunc(gamepad.buttons[0]?.value);
   curStates.East = trunc(gamepad.buttons[1]?.value);
   curStates.West = trunc(gamepad.buttons[2]?.value);
@@ -232,7 +287,7 @@ onMount(() => {
     tick();
   });
   window.addEventListener('gamepaddisconnected', (event) => {
-    if (gamepadIdx === event.gamepad.index || !currentGamepad?.connected) {
+    if (gamepadIdx === event.gamepad.index || !gamepad?.connected) {
       gamepadIdx = null;
     }
   });
@@ -257,52 +312,56 @@ useDisconnect(() => clearTimeout(handle));
 $: {
   connectEvent(enabled);
 }
-
 </script>
 
-<Collapse title={name}>
-  <svelte:fragment slot='title'>
-    <v-breadcrumbs crumbs="input_controller" />
+<Collapse>
+  <svelte:fragment slot="title">{name}</svelte:fragment>
+  <svelte:fragment slot="breadcrumbs">
+    <Breadcrumbs crumbs={['input_controller']} />
 
-    {#if currentGamepad?.connected}
-      ({currentGamepad?.id})
+    {#if gamepad?.connected}
+      ({gamepad?.id})
     {/if}
   </svelte:fragment>
 
-  <div slot="header">
-    {#if currentGamepad?.connected && enabled}
-      <v-badge variant='green' label='Enabled' />
-    {:else}
-      <v-badge variant='gray' label='Disabled' />
-    {/if}
-  </div>
-
-  <div class="h-full w-full border border-t-0 border-medium p-4">
-    <div class="flex flex-row">
-      <v-switch
-        label='Enable gamepad'
-        value={enabled ? 'on' : 'off'}
-        on:input={() => (enabled = !enabled)}
+  <svelte:fragment slot="addon">
+    {#if gamepad?.connected && enabled}
+      <Badge
+        variant="green"
+        label="Enabled"
       />
+    {:else}
+      <Badge
+        variant="gray"
+        label="Disabled"
+      />
+    {/if}
+  </svelte:fragment>
+
+  <svelte:fragment slot="content">
+    <div class="flex flex-row">
+      <Label>
+        Enable gamepad
+        <Switch
+          slot="input"
+          on={enabled}
+          on:toggle={({ detail }) => (enabled = detail)}
+        />
+      </Label>
     </div>
 
-    {#if currentGamepad?.connected}
+    {#if gamepad?.connected}
       <div class="flex h-full w-full flex-row justify-between gap-2">
         {#each Object.keys(curStates) as stateName, value}
           <div class="ml-0 flex w-[8ex] flex-col text-center">
-            <p class="subtitle m-0">{stateName}</p>
-            {value.toFixed((/X|Y|Z$/u).test(stateName.toString()) ? 4 : 0)}
+            <p class="m-0">{stateName}</p>
+            {value.toFixed(/X|Y|Z$/u.test(stateName.toString()) ? 4 : 0)}
           </div>
         {/each}
       </div>
     {/if}
-  </div>
+  </svelte:fragment>
 </Collapse>
 
 <style>
-
-.subtitle {
-  color: var(--black-70);
-}
-
 </style>

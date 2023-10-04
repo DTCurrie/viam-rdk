@@ -1,4 +1,9 @@
-import type { Geometry, BoxGeometry, CapsuleGeometry, SphereGeometry } from '@/api/navigation';
+import type {
+  Geometry,
+  BoxGeometry,
+  CapsuleGeometry,
+  SphereGeometry,
+} from '@/api/navigation';
 import type { Shapes } from './types';
 import { ViamObject3D } from '@viamrobotics/three';
 

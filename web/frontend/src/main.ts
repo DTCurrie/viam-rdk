@@ -1,6 +1,5 @@
-import '@viamrobotics/prime';
+import '@viamrobotics/prime-core';
 import './tailwind.css';
-import './index.css';
 import App from './app.svelte';
 
 export { version } from '../package.json';

@@ -1,73 +1,79 @@
 <!--
-  Rendering embedded maps inside of a shadow dom is currently broken for MapLibreGL.
-  This Collapse component is taken from PRIME but removes all web component behavior.
-  Once we've completed the svelte migration it can be removed and replaced with the PRIME component.
+@component
+  
+An element that Toggles visibility of content.
+
+```svelte
+    <Collapse>
+      <svelte:fragment slot="heading">Motor 1</svelte:fragment>
+      <Breadcrumbs slot='title' crumbs={['Robot', 'Motor']}></Breadcrumbs>
+      <Badge slot='information' label='Inactive'></Badge>
+      <div slot='content' "text-sm p-4 border border-t-0 border-light">
+        Motor one was concieved and executed at Bell Labs in 1972 under the 
+        guidance of lead director Dennis Richie and Superviser Wallace Breen.
+      </div>
+    </Collapse>
+```
 -->
+<svelte:options immutable />
+
 <script lang="ts">
+import cx from 'classnames';
+import { createEventDispatcher } from 'svelte';
+import { Icon } from '@viamrobotics/prime-core';
 
-import { onMount, createEventDispatcher, tick } from 'svelte';
+/** Whether the collapse is in the open position. */
+export let open = false;
 
-export let title = '';
-export let open = Boolean(localStorage.getItem(`rc.collapse.${title}.open`));
+/** Additional CSS classes to pass to the collapse button. */
+let extraClasses: cx.Argument = '';
+export { extraClasses as cx };
 
-const dispatch = createEventDispatcher();
+const dispatch = createEventDispatcher<{
+  /** Fires when the collapse is toggled */
+  toggle: boolean;
+}>();
 
-const handleClick = async (event: Event) => {
-  if ((event.target as HTMLElement).getAttribute('slot') === 'header') {
-    return;
-  }
-
+const handleClick = () => {
   open = !open;
-
-  if (open) {
-    localStorage.setItem(`rc.collapse.${title}.open`, 'true');
-  } else {
-    localStorage.removeItem(`rc.collapse.${title}.open`);
-  }
-
-  await tick();
-
-  dispatch('toggle', { open });
+  dispatch('toggle', open);
 };
-
-onMount(() => {
-  if (open) {
-    dispatch('toggle', { open: true });
-  }
-});
-
 </script>
 
 <div class="relative w-full">
-  <div
-    class='
-      border border-light bg-white w-full py-2 px-4
-      flex flex-reverse items-center justify-between text-default cursor-pointer
-    '
+  <button
+    aria-label="Toggle Content"
+    class={cx(
+      'border-light text-default flex w-full cursor-pointer items-center justify-between border bg-white px-4 py-2',
+      extraClasses
+    )}
     on:click={handleClick}
-    on:keyup|stopPropagation|preventDefault={handleClick}
   >
-    <div class="flex flex-wrap gap-x-3 gap-y-1 items-center">
-      {#if title}
-        <h2 class="m-0 text-sm">{title}</h2>
+    <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
+      {#if $$slots.title}
+        <h2 class="m-0 text-sm"><slot name="title" /></h2>
       {/if}
 
-      <slot name="title" />
+      <slot name="breadcrumbs" />
     </div>
 
-    <div class="h-full flex items-center gap-3">
-      <slot name="header" />
+    <div class="flex h-full items-center gap-3">
+      <slot name="addon" />
 
-      <v-icon
-        class:rotate-0={!open}
-        class:rotation-180={open}
-        name="chevron-down"
-        size="2xl"
-      />
+      <div
+        class={cx('transition-transform duration-200', {
+          'rotate-0': !open,
+          'rotate-180': open,
+        })}
+      >
+        <Icon name="chevron-down" />
+      </div>
     </div>
-  </div>
+  </button>
 
   {#if open}
-    <slot />
+    <div class="border border-t-0 border-medium p-4 text-sm">
+      <slot name="content" />
+    </div>
   {/if}
 </div>

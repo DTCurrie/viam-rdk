@@ -1,8 +1,11 @@
 <script lang="ts">
-
 import { type Credentials } from '@viamrobotics/rpc';
 import { commonApi } from '@viamrobotics/sdk';
-import { resourceNameToString, filterWithStatus, filterSubtype } from '@/lib/resource';
+import {
+  resourceNameToString,
+  filterWithStatus,
+  filterSubtype,
+} from '@/lib/resource';
 import { useRobotClient } from '@/hooks/robot-client';
 import Arm from './arm/index.svelte';
 import AudioInput from './audio-input/index.svelte';
@@ -25,13 +28,15 @@ import Sensors from './sensors/index.svelte';
 import Slam from './slam/index.svelte';
 import Client from '@/lib/components/robot-client.svelte';
 import type { RCOverrides } from '@/types/overrides';
+import { Banner, NotificationContainer } from '@viamrobotics/prime-core';
 
-const { resources, components, services, statuses, sensorNames } = useRobotClient();
+const { resources, components, services, statuses, sensorNames } =
+  useRobotClient();
 
 export let host: string;
-export let bakedAuth: { authEntity?: string; creds?: Credentials; } | undefined = {};
+export let bakedAuth: { authEntity?: string; creds?: Credentials } | undefined =
+  {};
 export let supportedAuthTypes: string[] | undefined = [];
-export let webrtcEnabled: boolean;
 export let signalingAddress: string;
 export let overrides: RCOverrides | undefined = undefined;
 
@@ -58,38 +63,45 @@ $: filteredInputControllerList = $components.filter((component) => {
   return (
     component.subtype === 'input_controller' &&
     Boolean(component.name) &&
-    remSplit[remSplit.length - 1] !== 'WebGamepad' && resourceStatusByName(component)
+    remSplit[remSplit.length - 1] !== 'WebGamepad' &&
+    resourceStatusByName(component)
   );
 });
 
-const getStatus = (statusMap: Record<string, unknown>, resource: commonApi.ResourceName.AsObject) => {
+const getStatus = (
+  statusMap: Record<string, unknown>,
+  resource: commonApi.ResourceName.AsObject
+) => {
   const key = resourceNameToString(resource);
   // todo(mp) Find a way to fix this type error
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  return key ? statusMap[key] as any : undefined;
+  return key ? (statusMap[key] as any) : undefined;
 };
-
 </script>
 
+<NotificationContainer />
+
 <Client
-  {webrtcEnabled}
   {host}
   {signalingAddress}
   {bakedAuth}
   {supportedAuthTypes}
 >
-  <v-notify
-    slot='connecting'
-    class='p-3'
-    variant='info'
-    title={`Connecting via ${webrtcEnabled ? 'WebRTC' : 'gRPC'}...`}
-  />
+  <Banner
+    slot="connecting"
+    variant="info"
+  >
+    <svelte:fragment slot="title">Connecting ...</svelte:fragment>
+  </Banner>
 
-  <v-notify
-    slot='reconnecting'
-    variant='danger'
-    title='Connection lost, attempting to reconnect ...'
-  />
+  <Banner
+    slot="reconnecting"
+    variant="danger"
+  >
+    <svelte:fragment slot="title">
+      Connection lost, attempting to reconnect ...
+    </svelte:fragment>
+  </Banner>
 
   <div class="flex flex-col gap-4 p-3">
     <!-- ******* BASE *******  -->
@@ -99,7 +111,10 @@ const getStatus = (statusMap: Record<string, unknown>, resource: commonApi.Resou
 
     <!-- ******* SLAM *******  -->
     {#each filterSubtype($services, 'slam') as { name } (name)}
-      <Slam {name} overrides={overrides?.slam} />
+      <Slam
+        {name}
+        overrides={overrides?.slam}
+      />
     {/each}
 
     <!-- ******* ENCODER *******  -->
@@ -120,17 +135,14 @@ const getStatus = (statusMap: Record<string, unknown>, resource: commonApi.Resou
       <MovementSensor {name} />
     {/each}
 
-     <!-- ******* POWER SENSOR *******  -->
+    <!-- ******* POWER SENSOR *******  -->
     {#each filterSubtype($components, 'power_sensor') as { name } (name)}
       <PowerSensor {name} />
     {/each}
 
     <!-- ******* ARM *******  -->
     {#each filterSubtype($components, 'arm') as arm (arm.name)}
-      <Arm
-        name={arm.name}
-        status={getStatus($statuses, arm)}
-      />
+      <Arm name={arm.name} />
     {/each}
 
     <!-- ******* GRIPPER *******  -->
@@ -180,13 +192,17 @@ const getStatus = (statusMap: Record<string, unknown>, resource: commonApi.Resou
 
     <!-- ******* NAVIGATION *******  -->
     {#each filterSubtype($services, 'navigation') as { name } (name)}
-      <Navigation {name} write={false} />
+      <Navigation
+        {name}
+        write={false}
+      />
     {/each}
 
     <!-- ******* SENSOR *******  -->
     {#if Object.keys($sensorNames).length > 0}
       <Sensors
-        name={filterSubtype($resources, 'sensors', { remote: false })[0]?.name ?? ''}
+        name={filterSubtype($resources, 'sensors', { remote: false })[0]
+          ?.name ?? ''}
         sensorNames={$sensorNames}
       />
     {/if}

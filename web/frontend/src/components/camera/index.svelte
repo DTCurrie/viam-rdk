@@ -1,83 +1,97 @@
 <script lang="ts">
-
 import type { commonApi } from '@viamrobotics/sdk';
 import Camera from './camera.svelte';
 import PCD from '../pcd/index.svelte';
 import Collapse from '@/lib/components/collapse.svelte';
 import { selectedMap } from '@/lib/camera-state';
+import {
+  Breadcrumbs,
+  IconButton,
+  Label,
+  Select,
+  Switch,
+} from '@viamrobotics/prime-core';
 
 export let resources: commonApi.ResourceName.AsObject[];
 
-const openCameras: Record<string, boolean | undefined> = {};
-const refreshFrequency: Record<string, string | undefined> = {};
+$: openCameras = {} as Record<string, boolean>;
+$: refreshFrequency = {} as Record<string, keyof typeof selectedMap>;
+$: triggerRefresh = false;
 
-let triggerRefresh = false;
-
-const setupCamera = (cameraName: string) => {
-  openCameras[cameraName] = !openCameras[cameraName];
-
-  for (const camera of resources) {
-    if (!refreshFrequency[camera.name]) {
-      refreshFrequency[camera.name] = 'Live';
-    }
+const setupCamera = (name: string, on: boolean) => {
+  if (on && !refreshFrequency[name]) {
+    refreshFrequency[name] = 'Live';
   }
 };
 
-const handleRefreshInput = (name: string) => {
-  return (event: CustomEvent) => {
-    refreshFrequency[name] = event.detail.value;
-  };
+const handleRefreshInput = (event: Event, name: string) => {
+  refreshFrequency[name] = (event.target as HTMLSelectElement)
+    .value as keyof typeof selectedMap;
 };
-
 </script>
 
-{#each resources as camera (camera.name)}
-  <Collapse title={camera.name}>
-    <v-breadcrumbs
-      slot="title"
-      crumbs="camera"
+{#each resources as { name } (name)}
+  <Collapse>
+    <svelte:fragment slot="title">{name}</svelte:fragment>
+    <Breadcrumbs
+      slot="breadcrumbs"
+      crumbs={['camera']}
     />
 
-    <div class="flex flex-col gap-4 border border-t-0 border-medium p-4">
-      <v-switch
-        label={`View ${camera.name}`}
-        aria-label={openCameras[camera.name] ? `Hide Camera: ${camera.name}` : `View Camera: ${camera.name}`}
-        value={openCameras[camera.name] ? 'on' : 'off'}
-        on:input={() => setupCamera(camera.name)}
-      />
-
-      {#if openCameras[camera.name]}
-        <div class="flex flex-wrap items-end gap-2">
-          <v-select
-            value={refreshFrequency[camera.name]}
-            class="w-fit"
-            label="Refresh frequency"
-            aria-label="Refresh frequency"
-            options={Object.keys(selectedMap).join(',')}
-            on:input={handleRefreshInput(camera.name)}
+    <svelte:fragment slot="content">
+      <div class="flex flex-col gap-2">
+        <Label>
+          View {name}
+          <Switch
+            slot="input"
+            aria-label={openCameras[name]
+              ? `Hide Camera: ${name}`
+              : `View Camera: ${name}`}
+            bind:on={openCameras[name]}
+            on:toggle={({ detail }) => setupCamera(name, detail)}
           />
+        </Label>
 
-          {#if refreshFrequency[camera.name] !== 'Live'}
-            <v-button
-              icon="refresh"
-              label="Refresh"
-              on:click={() => {
-                triggerRefresh = !triggerRefresh;
-              }}
-            />
-          {/if}
-        </div>
-      {/if}
+        {#if openCameras[name]}
+          <div class="flex flex-wrap items-end gap-2">
+            <Label>
+              Refresh frequency
+              <div
+                slot="input"
+                class="flex gap-2"
+              >
+                <Select
+                  bind:value={refreshFrequency[name]}
+                  on:change={(event) => handleRefreshInput(event, name)}
+                >
+                  {#each Object.keys(selectedMap) as frequency}
+                    <option>{frequency}</option>
+                  {/each}
+                </Select>
+                {#if refreshFrequency[name] !== 'Live'}
+                  <IconButton
+                    icon="refresh"
+                    label="Refresh"
+                    on:click={() => {
+                      triggerRefresh = !triggerRefresh;
+                    }}
+                  />
+                {/if}
+              </div>
+            </Label>
+          </div>
+        {/if}
 
-      {#if openCameras[camera.name]}
-        <Camera
-          cameraName={camera.name}
-          showExportScreenshot={true}
-          refreshRate={refreshFrequency[camera.name]}
-        />
-      {/if}
+        {#if openCameras[name]}
+          <Camera
+            cameraName={name}
+            showExportScreenshot={true}
+            refreshRate={refreshFrequency[name]}
+          />
+        {/if}
 
-      <PCD cameraName={camera.name} />
-    </div>
+        <PCD cameraName={name} />
+      </div>
+    </svelte:fragment>
   </Collapse>
 {/each}
