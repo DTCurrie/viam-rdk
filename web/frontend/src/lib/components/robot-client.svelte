@@ -1,11 +1,15 @@
-<script lang='ts'>
-
+<script lang="ts">
 /* eslint-disable require-atomic-updates */
 import { grpc } from '@improbable-eng/grpc-web';
 import { Duration } from 'google-protobuf/google/protobuf/duration_pb';
 import { onMount, onDestroy, createEventDispatcher } from 'svelte';
 import { type Credentials, ConnectionClosedError } from '@viamrobotics/rpc';
-import { Client, robotApi, commonApi, type ServiceError } from '@viamrobotics/sdk';
+import {
+  Client,
+  robotApi,
+  commonApi,
+  type ServiceError,
+} from '@viamrobotics/sdk';
 import { notify } from '@viamrobotics/prime';
 import { StreamManager } from '@/lib/stream-manager';
 import { getOperations, getResourceNames, getSessions } from '@/api/robot';
@@ -17,7 +21,7 @@ import { resourceNameToString, filterSubtype } from '@/lib/resource';
 export let webrtcEnabled: boolean;
 export let host: string;
 export let signalingAddress: string;
-export let bakedAuth: { authEntity?: string; creds?: Credentials; } = {};
+export let bakedAuth: { authEntity?: string; creds?: Credentials } = {};
 export let supportedAuthTypes: string[] = [];
 
 const {
@@ -36,7 +40,7 @@ const {
 } = useRobotClient();
 
 const dispatch = createEventDispatcher<{
-  'connection-error': unknown
+  'connection-error': unknown;
 }>();
 
 const relevantSubtypesForStatus = [
@@ -48,7 +52,7 @@ const relevantSubtypesForStatus = [
   'input_controller',
 ] as const;
 
-const urlPort = location.port ? `:${location.port}` : ''
+const urlPort = location.port ? `:${location.port}` : '';
 const impliedURL = `${location.protocol}//${location.hostname}${urlPort}`;
 
 $robotClient = new Client(impliedURL, {
@@ -93,12 +97,15 @@ const handleError = (message: string, error: unknown, onceKey: string) => {
   }
 
   notify.danger(message);
-  
+
   // eslint-disable-next-line no-console
   console.error(message, { error });
 };
 
-const handleCallErrors = (list: { resources: boolean; ops: boolean }, newErrors: unknown) => {
+const handleCallErrors = (
+  list: { resources: boolean; ops: boolean },
+  newErrors: unknown
+) => {
   const errorsList = document.createElement('ul');
   errorsList.classList.add('list-disc', 'pl-4');
 
@@ -157,7 +164,7 @@ const loadCurrentOps = async () => {
   for (const op of list) {
     ops.push({
       op,
-      elapsed: op.started ? Date.now() - (op.started.seconds * 1000) : -1,
+      elapsed: op.started ? Date.now() - op.started.seconds * 1000 : -1,
     });
   }
 
@@ -228,10 +235,13 @@ const restartStatusStream = () => {
   streamReq.setEvery(new Duration().setNanos(500_000_000));
 
   $statusStream = $robotClient.robotService.streamStatus(streamReq);
-  $statusStream.on('data', (response: { getStatusList(): robotApi.Status[] }) => {
-    updateStatus(response.getStatusList());
-    lastStatusTS = Date.now();
-  });
+  $statusStream.on(
+    'data',
+    (response: { getStatusList(): robotApi.Status[] }) => {
+      updateStatus(response.getStatusList());
+      lastStatusTS = Date.now();
+    }
+  );
   $statusStream.on('status', (newStatus?: { details: unknown }) => {
     if (!ConnectionClosedError.isError(newStatus!.details)) {
       // eslint-disable-next-line no-console
@@ -277,7 +287,9 @@ const queryMetadata = async () => {
       if (
         resource.namespace === 'rdk' &&
         resource.type === 'component' &&
-        relevantSubtypesForStatus.includes(resource.subtype as typeof relevantSubtypesForStatus[number])
+        relevantSubtypesForStatus.includes(
+          resource.subtype as (typeof relevantSubtypesForStatus)[number]
+        )
       ) {
         shouldRestartStatusStream = true;
         break;
@@ -289,10 +301,14 @@ const queryMetadata = async () => {
 
   resourcesOnce = true;
   if (resourcesChanged) {
-    const sensorsName = filterSubtype(resources.current, 'sensors', { remote: false })[0]?.name;
+    const sensorsName = filterSubtype(resources.current, 'sensors', {
+      remote: false,
+    })[0]?.name;
 
-    $sensorNames = sensorsName === undefined ? [] : (await getSensors($robotClient, sensorsName));
-
+    $sensorNames =
+      sensorsName === undefined
+        ? []
+        : await getSensors($robotClient, sensorsName);
   }
 
   if (shouldRestartStatusStream) {
@@ -315,7 +331,7 @@ const isConnected = () => {
     connections.resources &&
     connections.ops &&
     // check status on interval if direct grpc
-    (webrtcEnabled || (Date.now() - lastStatusTS! <= checkIntervalMillis))
+    (webrtcEnabled || Date.now() - lastStatusTS! <= checkIntervalMillis)
   );
 };
 
@@ -382,7 +398,7 @@ const tick = async () => {
     }
     resourcesOnce = false;
 
-    await $robotClient.connect();
+    await $robotClient.connect({ priority: 1 });
 
     const now = Date.now();
 
@@ -419,7 +435,11 @@ const start = () => {
 const connect = async (creds?: Credentials) => {
   $connectionStatus = 'connecting';
 
-  await $robotClient.connect({ authEntity: bakedAuth.authEntity, creds: creds ?? bakedAuth.creds });
+  await $robotClient.connect({
+    authEntity: bakedAuth.authEntity,
+    creds: creds ?? bakedAuth.creds,
+    priorit: 1,
+  });
 
   $connectionStatus = 'connected';
   start();
@@ -475,13 +495,12 @@ onDestroy(() => {
 if (supportedAuthTypes.length === 0) {
   init();
 }
-
 </script>
 
 {#if $connectionStatus === 'connecting'}
-  <slot name='connecting' />
+  <slot name="connecting" />
 {:else if $connectionStatus === 'reconnecting'}
-  <slot name='reconnecting' />
+  <slot name="reconnecting" />
 {/if}
 
 {#if $connectionStatus === 'connected' || $connectionStatus === 'reconnecting'}
@@ -501,11 +520,13 @@ if (supportedAuthTypes.length === 0) {
           type="password"
           autocomplete="off"
           on:keyup={async (event) => event.key === 'Enter' && login(authType)}
-        >
+        />
         <v-button
           disabled={$connectionStatus === 'connecting'}
           label="Login"
-          on:click={$connectionStatus === 'connecting' ? undefined : async () => login(authType)}
+          on:click={$connectionStatus === 'connecting'
+            ? undefined
+            : async () => login(authType)}
         />
       </div>
     </div>
